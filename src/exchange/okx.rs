@@ -116,7 +116,7 @@ fn check_batch(value: &Value, orders: &[Order]) -> Result<()> {
 }
 
 impl Exchange for Okx {
-    fn name(&self) -> &str { "okx" }
+    fn name(&self) -> &str { match self.market { OkxMarket::Spot => "okx-spot", OkxMarket::Swap => "okx-swap" } }
     fn to_exchange_symbol(&self, symbol: &Symbol) -> String { symbol.okx(self.market == OkxMarket::Swap) }
     async fn fetch_open_orders(&self, symbol: &str) -> Result<Vec<Order>> {
         let mut after = String::new();

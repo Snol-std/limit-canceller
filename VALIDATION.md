@@ -1,40 +1,29 @@
-# Validation Notes
+# Validation notes for v0.3.3
 
-Statically verified:
+This environment does not contain Rust/Cargo, so a real `cargo check` or release build could not be executed here.
 
-- The GUI uses the iced 0.14 API (`application`, `Task`, `Task::abortable`, `text_input`, `pick_list`, `scrollable`).
-- `api_secret` and the OKX `passphrase` use secure text inputs.
-- The GUI loads an existing `config.toml`, including legacy string-only `symbols` entries.
-- When saved, the GUI writes detailed symbol entries with an independent `side` per ticker.
-- Start saves and validates the configuration before launching the existing async engine.
-- Stop triggers the iced abort handle; dropping the engine future also stops its child `JoinSet` tasks.
-- If every exchange has empty credentials, Start does not launch the engine.
-- Editing settings while RUNNING does not mutate the configuration snapshot already used by the engine.
-- Existing exchange adapters are preserved.
+Static checks performed:
 
-Environment limitation:
+- Project version and GUI title are `0.3.3`.
+- Exchange-level `market` and `side` fields were removed from the active configuration schema.
+- Each ticker now requires its own `market`, `symbol`, and `side`.
+- The legacy string-only `symbols = ["BTC/USDT"]` format is rejected by the new schema.
+- GUI ticker rows contain a lightweight two-state market button, symbol input, cancellation-side selector, and remove button.
+- Symbol normalization supports bare base symbols, concatenated USDT/USDC pairs, slash-separated pairs, and backslash-separated pairs.
+- Bare base symbols default to USDT.
+- Only USDT and USDC quote assets are accepted.
+- The same normalized symbol is allowed in different markets on the same exchange, but duplicate `market + symbol` entries are rejected.
+- The engine starts independent worker groups for each configured market on Binance, OKX, and Bybit.
+- GUI saves use compact inline ticker tables under `symbols = [...]`; `[[exchange.symbols]]` output is no longer generated.
+- Low-resource `iced` settings from v0.3.1/v0.3.2 remain unchanged.
+- English remains the default UI language and Russian remains available from the GUI selector.
+- Static header/settings are outside the main `scrollable`, reducing clipped text and redraw work during scrolling.
+- Per-ticker market `pick_list` widgets were removed to avoid the iced 0.14 tiny-skia clipping hot path during scroll repaints.
 
-Rust/Cargo is not installed in the validation environment, so `cargo check` and `cargo test` cannot be executed here. On a machine with Rust 1.88+ run:
+Recommended local verification on Windows:
 
 ```powershell
 cargo check
-cargo test --locked
-cargo run --release
+cargo test
+cargo build --release
 ```
-
-Iced 0.14 specifies `rust-version = 1.88`; Rust 1.97.1 is compatible.
-
-Additional static checks for v0.3.2:
-
-- Window settings use 820×620, a 680×480 minimum size, and centered positioning.
-- The embedded RGBA icon is 64×64×4 = 16384 bytes.
-- The Windows `.ico` contains multiple sizes.
-- `build.rs` uses `winres` only under `cfg(windows)`.
-- The version in Cargo.toml and the GUI title is 0.3.2.
-- iced default features are disabled; the GUI uses the lightweight `tiny-skia` renderer instead of `wgpu`.
-- The custom Tokio executor uses a single worker thread to reduce idle resource usage.
-
-- English is the default GUI language.
-- Russian can be selected from the GUI language picker.
-- The selected language is persisted as `ui_language = "en"` or `ui_language = "ru"` in `config.toml`.
-- No Cyrillic text appears in Rust comments or documentation comments; Cyrillic is limited to runtime Russian localization strings.

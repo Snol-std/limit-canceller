@@ -296,7 +296,10 @@ fn parse_orders(body: &Value) -> Result<Vec<Order>> {
 
 impl Exchange for Binance {
     fn name(&self) -> &str {
-        "binance"
+        match self.market {
+            BinanceMarket::Spot => "binance-spot",
+            BinanceMarket::Futures => "binance-futures",
+        }
     }
 
     fn to_exchange_symbol(&self, symbol: &Symbol) -> String {

@@ -1,44 +1,36 @@
-# Copy this file to config.toml and fill in the required sections.
+# Copy this file to config.toml, or configure everything directly from the GUI.
 poll_milliseconds = 250
 ui_language = "en" # en | ru
 
-# side: buy | sell | both
-# The cancellation side is configured independently for each ticker.
-# The exchange-level side field is a fallback for the legacy string-only format
-# or for a ticker object without its own side value.
+# Every ticker has its own market and cancellation side.
+# Supported sides: buy | sell | both
+# Supported symbol input in the GUI includes:
+#   BTC, BTCUSDT, BTC/USDT, BTC\USDT, BTCUSDC, BTC/USDC, BTC\USDC
+# Symbols are normalized to BASE/USDT or BASE/USDC when the configuration is saved.
 
 [binance]
 api_key = ""
 api_secret = ""
-market = "futures"
-side = "both"
 symbols = [
-  { symbol = "BTC/USDT", side = "sell" },
-  { symbol = "ETH/USDT", side = "both" },
-  { symbol = "LA/USDT",  side = "buy" }
+  { market = "futures", symbol = "BTC/USDT", side = "sell" },
+  { market = "spot", symbol = "ETH/USDT", side = "both" },
+  { market = "futures", symbol = "LA/USDT", side = "buy" },
+  { market = "spot", symbol = "LA/USDC", side = "buy" },
 ]
 
 [okx]
 api_key = ""
 api_secret = ""
 passphrase = ""
-market = "swap"
-side = "both"
 symbols = [
-  { symbol = "BTC/USDT", side = "buy" },
-  { symbol = "ETH/USDT", side = "sell" }
+  { market = "swap", symbol = "BTC/USDT", side = "buy" },
+  { market = "spot", symbol = "ETH/USDC", side = "sell" },
 ]
 
 [bybit]
 api_key = ""
 api_secret = ""
-market = "linear"
-side = "both"
 symbols = [
-  { symbol = "BTC/USDT", side = "both" },
-  { symbol = "ETH/USDT", side = "buy" }
+  { market = "linear", symbol = "BTC/USDT", side = "both" },
+  { market = "spot", symbol = "ETH/USDC", side = "buy" },
 ]
-
-# The legacy format is also supported:
-# symbols = ["BTC/USDT", "ETH/USDT"]
-# In this case both tickers use the exchange-level side value.

@@ -8,10 +8,8 @@ use std::future::Future;
 use crate::config::{AppConfig, BinanceConfig, BybitConfig, OkxConfig, SymbolConfig};
 use crate::engine;
 use crate::exchange::CancelSide;
+use crate::symbol::Symbol;
 
-const BINANCE_MARKETS: [MarketChoice; 2] = [MarketChoice::Spot, MarketChoice::Futures];
-const OKX_MARKETS: [MarketChoice; 2] = [MarketChoice::Spot, MarketChoice::Swap];
-const BYBIT_MARKETS: [MarketChoice; 2] = [MarketChoice::Spot, MarketChoice::Linear];
 const LANGUAGES: [Language; 2] = [Language::English, Language::Russian];
 const SIDES_EN: [SideChoice; 3] = [SideChoice::BuyEn, SideChoice::SellEn, SideChoice::BothEn];
 const SIDES_RU: [SideChoice; 3] = [SideChoice::BuyRu, SideChoice::SellRu, SideChoice::BothRu];
@@ -77,9 +75,8 @@ struct UiText {
     api_key: &'static str,
     api_secret: &'static str,
     passphrase: &'static str,
-    market: &'static str,
     clear_keys: &'static str,
-    tickers_cancel_side: &'static str,
+    tickers_market_cancel_side: &'static str,
     add_ticker: &'static str,
     remove: &'static str,
     credentials_cleared: &'static str,
@@ -114,9 +111,8 @@ fn ui_text(language: Language) -> UiText {
             api_key: "API key",
             api_secret: "API secret",
             passphrase: "Passphrase",
-            market: "Market",
             clear_keys: "Clear keys",
-            tickers_cancel_side: "Tickers / cancel side",
+            tickers_market_cancel_side: "Tickers / market / cancel side",
             add_ticker: "+ Add ticker",
             remove: "Remove",
             credentials_cleared: "credentials cleared. Click Save to write the changes to disk.",
@@ -148,9 +144,8 @@ fn ui_text(language: Language) -> UiText {
             api_key: "API-ключ",
             api_secret: "API-секрет",
             passphrase: "Парольная фраза",
-            market: "Рынок",
             clear_keys: "Очистить ключи",
-            tickers_cancel_side: "Тикеры / сторона снятия",
+            tickers_market_cancel_side: "Тикеры / рынок / сторона снятия",
             add_ticker: "+ Добавить тикер",
             remove: "Удалить",
             credentials_cleared: "ключи API очищены. Нажмите «Сохранить», чтобы записать изменения на диск.",
@@ -263,11 +258,27 @@ impl MarketChoice {
         }
     }
 
-    fn options(exchange: ExchangeId) -> &'static [Self] {
+    /// Returns the other market available for this exchange.
+    ///
+    /// A button is used instead of a per-row `pick_list` because the software
+    /// `tiny-skia` renderer in iced 0.14 becomes expensive when many clipped
+    /// dropdown widgets are repainted while scrolling. Each exchange has only
+    /// two supported markets, so a direct toggle keeps the same functionality
+    /// with a much cheaper widget tree.
+    fn toggled(self, exchange: ExchangeId) -> Self {
         match exchange {
-            ExchangeId::Binance => &BINANCE_MARKETS,
-            ExchangeId::Okx => &OKX_MARKETS,
-            ExchangeId::Bybit => &BYBIT_MARKETS,
+            ExchangeId::Binance => match self {
+                Self::Futures => Self::Spot,
+                _ => Self::Futures,
+            },
+            ExchangeId::Okx => match self {
+                Self::Swap => Self::Spot,
+                _ => Self::Swap,
+            },
+            ExchangeId::Bybit => match self {
+                Self::Linear => Self::Spot,
+                _ => Self::Linear,
+            },
         }
     }
 }
@@ -280,6 +291,7 @@ impl std::fmt::Display for MarketChoice {
 
 #[derive(Debug, Clone)]
 struct SymbolForm {
+    market: MarketChoice,
     symbol: String,
     side: CancelSide,
 }
@@ -289,7 +301,6 @@ struct ExchangeForm {
     api_key: String,
     api_secret: String,
     passphrase: String,
-    market: MarketChoice,
     symbols: Vec<SymbolForm>,
 }
 
@@ -299,17 +310,17 @@ impl ExchangeForm {
             api_key: String::new(),
             api_secret: String::new(),
             passphrase: String::new(),
-            market: MarketChoice::Spot,
             symbols: Vec::new(),
         }
     }
 
-    fn symbols_from_config(symbols: &[SymbolConfig], fallback: &str) -> Vec<SymbolForm> {
+    fn symbols_from_config(symbols: &[SymbolConfig], exchange: ExchangeId) -> Vec<SymbolForm> {
         symbols
             .iter()
             .map(|item| SymbolForm {
-                symbol: item.symbol().to_string(),
-                side: CancelSide::parse(item.side(fallback)).unwrap_or(CancelSide::Both),
+                market: MarketChoice::parse(&item.market, exchange),
+                symbol: item.symbol.clone(),
+                side: CancelSide::parse(&item.side).unwrap_or(CancelSide::Both),
             })
             .collect()
     }
@@ -320,8 +331,7 @@ impl ExchangeForm {
                 api_key: c.api_key.clone(),
                 api_secret: c.api_secret.clone(),
                 passphrase: String::new(),
-                market: MarketChoice::parse(&c.market, ExchangeId::Binance),
-                symbols: Self::symbols_from_config(&c.symbols, &c.side),
+                symbols: Self::symbols_from_config(&c.symbols, ExchangeId::Binance),
             },
             None => Self::blank(ExchangeId::Binance),
         }
@@ -333,8 +343,7 @@ impl ExchangeForm {
                 api_key: c.api_key.clone(),
                 api_secret: c.api_secret.clone(),
                 passphrase: c.passphrase.clone(),
-                market: MarketChoice::parse(&c.market, ExchangeId::Okx),
-                symbols: Self::symbols_from_config(&c.symbols, &c.side),
+                symbols: Self::symbols_from_config(&c.symbols, ExchangeId::Okx),
             },
             None => Self::blank(ExchangeId::Okx),
         }
@@ -346,19 +355,28 @@ impl ExchangeForm {
                 api_key: c.api_key.clone(),
                 api_secret: c.api_secret.clone(),
                 passphrase: String::new(),
-                market: MarketChoice::parse(&c.market, ExchangeId::Bybit),
-                symbols: Self::symbols_from_config(&c.symbols, &c.side),
+                symbols: Self::symbols_from_config(&c.symbols, ExchangeId::Bybit),
             },
             None => Self::blank(ExchangeId::Bybit),
         }
     }
 
+    fn normalize_symbols(&mut self) -> Result<(), String> {
+        self.symbols.retain(|item| !item.symbol.trim().is_empty());
+        for item in &mut self.symbols {
+            let symbol = Symbol::parse(&item.symbol).map_err(|error| format!("{error:#}"))?;
+            item.symbol = symbol.canonical();
+        }
+        Ok(())
+    }
+
     fn detailed_symbols(&self) -> Vec<SymbolConfig> {
         self.symbols
             .iter()
-            .map(|item| SymbolConfig::Detailed {
+            .map(|item| SymbolConfig {
+                market: item.market.as_str().to_string(),
                 symbol: item.symbol.trim().to_string(),
-                side: Some(item.side.as_str().to_string()),
+                side: item.side.as_str().to_string(),
             })
             .collect()
     }
@@ -383,7 +401,7 @@ enum Message {
     ApiKeyChanged(ExchangeId, String),
     ApiSecretChanged(ExchangeId, String),
     PassphraseChanged(String),
-    MarketChanged(ExchangeId, MarketChoice),
+    MarketChanged(ExchangeId, usize, MarketChoice),
     SymbolChanged(ExchangeId, usize, String),
     SideChanged(ExchangeId, usize, CancelSide),
     AddSymbol(ExchangeId),
@@ -479,23 +497,17 @@ impl State {
                 api_key: self.binance.api_key.trim().to_string(),
                 api_secret: self.binance.api_secret.trim().to_string(),
                 symbols: self.binance.detailed_symbols(),
-                market: self.binance.market.as_str().to_string(),
-                side: "both".to_string(),
             }),
             okx: Some(OkxConfig {
                 api_key: self.okx.api_key.trim().to_string(),
                 api_secret: self.okx.api_secret.trim().to_string(),
                 passphrase: self.okx.passphrase.trim().to_string(),
                 symbols: self.okx.detailed_symbols(),
-                market: self.okx.market.as_str().to_string(),
-                side: "both".to_string(),
             }),
             bybit: Some(BybitConfig {
                 api_key: self.bybit.api_key.trim().to_string(),
                 api_secret: self.bybit.api_secret.trim().to_string(),
                 symbols: self.bybit.detailed_symbols(),
-                market: self.bybit.market.as_str().to_string(),
-                side: "both".to_string(),
             }),
         };
         config.validate().map_err(|error| format!("{error:#}"))?;
@@ -503,6 +515,9 @@ impl State {
     }
 
     fn save_config(&mut self) -> Result<AppConfig, String> {
+        self.binance.normalize_symbols()?;
+        self.okx.normalize_symbols()?;
+        self.bybit.normalize_symbols()?;
         let config = self.build_config()?;
         config
             .save(&self.config_path)
@@ -544,7 +559,7 @@ impl iced::Executor for SingleWorkerTokio {
 pub fn run() -> iced::Result {
     iced::application(State::boot, update, view)
         .executor::<SingleWorkerTokio>()
-        .title("Limit Canceller 0.3.2")
+        .title("Limit Canceller 0.3.3")
         .theme(Theme::Dark)
         .antialiasing(false)
         .window(iced::window::Settings {
@@ -578,7 +593,11 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.exchange_mut(exchange).api_secret = value
         }
         Message::PassphraseChanged(value) => state.okx.passphrase = value,
-        Message::MarketChanged(exchange, market) => state.exchange_mut(exchange).market = market,
+        Message::MarketChanged(exchange, index, market) => {
+            if let Some(item) = state.exchange_mut(exchange).symbols.get_mut(index) {
+                item.market = market;
+            }
+        }
         Message::SymbolChanged(exchange, index, value) => {
             if let Some(item) = state.exchange_mut(exchange).symbols.get_mut(index) {
                 item.symbol = value;
@@ -590,6 +609,11 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             }
         }
         Message::AddSymbol(exchange) => state.exchange_mut(exchange).symbols.push(SymbolForm {
+            market: match exchange {
+                ExchangeId::Binance => MarketChoice::Futures,
+                ExchangeId::Okx => MarketChoice::Swap,
+                ExchangeId::Bybit => MarketChoice::Linear,
+            },
             symbol: String::new(),
             side: CancelSide::Both,
         }),
@@ -702,11 +726,10 @@ fn view(state: &State) -> Element<'_, Message> {
 
     let header = row![
         column![
-            text("Limit Canceller 0.3.2").size(TITLE_SIZE),
+            text("Limit Canceller 0.3.3").size(TITLE_SIZE),
             text(format!("{}: {}", t.config_label, state.config_path)).size(SMALL_SIZE),
         ]
-        .spacing(2)
-        .width(Fill),
+        .spacing(2).width(Fill),
         text(status_text).size(BODY_SIZE),
         button(text(t.save).size(BODY_SIZE))
             .padding(BUTTON_PADDING)
@@ -714,6 +737,7 @@ fn view(state: &State) -> Element<'_, Message> {
             .on_press(Message::Save),
         start,
         stop,
+        container("").width(Length::Fixed(5.0)),
     ]
     .spacing(7)
     .align_y(iced::alignment::Vertical::Center)
@@ -741,9 +765,10 @@ fn view(state: &State) -> Element<'_, Message> {
     .width(Fill)
     .style(container::rounded_box);
 
-    let content = column![
-        header,
-        settings,
+    // Keep the static header/settings outside the scrolling clip layer.
+    // With iced 0.14 + tiny-skia this substantially reduces redraw work while
+    // the wheel is moving because fewer text runs are processed by clipping.
+    let body = column![
         exchange_card(state, ExchangeId::Binance),
         exchange_card(state, ExchangeId::Okx),
         exchange_card(state, ExchangeId::Bybit),
@@ -753,10 +778,14 @@ fn view(state: &State) -> Element<'_, Message> {
             .style(container::bordered_box),
     ]
     .spacing(8)
-    .padding(10)
     .width(Fill);
 
-    scrollable(content).height(Fill).into()
+    column![header, settings, scrollable(body).height(Fill)]
+        .spacing(8)
+        .padding(10)
+        .width(Fill)
+        .height(Fill)
+        .into()
 }
 
 fn exchange_card(state: &State, exchange: ExchangeId) -> Element<'_, Message> {
@@ -774,6 +803,12 @@ fn exchange_card(state: &State, exchange: ExchangeId) -> Element<'_, Message> {
         symbols = symbols.push(text(t.no_tickers).size(SMALL_SIZE));
     } else {
         for (index, item) in form.symbols.iter().enumerate() {
+            let next_market = item.market.toggled(exchange);
+            let market = button(text(item.market.as_str()).size(BODY_SIZE))
+                .padding(BUTTON_PADDING)
+                .style(button::background)
+                .width(Length::Fixed(112.0))
+                .on_press(Message::MarketChanged(exchange, index, next_market));
             let symbol_input = text_input("BTC/USDT", &item.symbol)
                 .on_input(move |value| Message::SymbolChanged(exchange, index, value))
                 .size(BODY_SIZE)
@@ -792,7 +827,7 @@ fn exchange_card(state: &State, exchange: ExchangeId) -> Element<'_, Message> {
                 .style(button::danger)
                 .on_press(Message::RemoveSymbol(exchange, index));
             symbols = symbols.push(
-                row![symbol_input, side, remove]
+                row![market, symbol_input, side, remove]
                     .spacing(6)
                     .align_y(iced::alignment::Vertical::Center)
                     .width(Fill),
@@ -831,15 +866,6 @@ fn exchange_card(state: &State, exchange: ExchangeId) -> Element<'_, Message> {
         ]
         .spacing(1)
         .width(Fill),
-        text(t.market).size(BODY_SIZE),
-        pick_list(
-            MarketChoice::options(exchange),
-            Some(form.market),
-            move |value| Message::MarketChanged(exchange, value),
-        )
-        .text_size(BODY_SIZE)
-        .padding(FIELD_PADDING)
-        .width(Length::Fixed(112.0)),
         button(text(t.clear_keys).size(BODY_SIZE))
             .padding(BUTTON_PADDING)
             .style(button::danger)
@@ -853,7 +879,7 @@ fn exchange_card(state: &State, exchange: ExchangeId) -> Element<'_, Message> {
         column![
             top,
             credentials,
-            text(t.tickers_cancel_side).size(BODY_SIZE),
+            text(t.tickers_market_cancel_side).size(BODY_SIZE),
             symbols,
             button(text(t.add_ticker).size(BODY_SIZE))
                 .padding(BUTTON_PADDING)

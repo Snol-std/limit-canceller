@@ -114,7 +114,7 @@ fn parse_orders(items: &[Value]) -> Result<Vec<Order>> {
 }
 
 impl Exchange for Bybit {
-    fn name(&self) -> &str { "bybit" }
+    fn name(&self) -> &str { match self.market { BybitMarket::Spot => "bybit-spot", BybitMarket::Linear => "bybit-linear" } }
     fn to_exchange_symbol(&self, symbol: &Symbol) -> String { symbol.bybit() }
     async fn fetch_open_orders(&self, symbol: &str) -> Result<Vec<Order>> {
         let mut cursor = String::new();

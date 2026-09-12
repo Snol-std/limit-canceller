@@ -73,8 +73,6 @@ https://github.com/Snol-std/limit-canceller
 - Disabled GUI antialiasing and unnecessary `iced` default features for a lighter build.
 - Added release-build optimizations including LTO, a single codegen unit, symbol stripping, and `panic = "abort"`.
 
-
-
 ### v0.3.2
 - Changed all default GUI text to English.
 - Added a GUI language selector with English and Russian translations.
@@ -82,3 +80,16 @@ https://github.com/Snol-std/limit-canceller
 - Added persistent `ui_language` configuration (`en` or `ru`), with English as the default for existing configurations.
 - Kept all source-code comments and technical documentation in English.
 - Preserved the low-resource `tiny-skia` renderer, single-worker Tokio executor, compact layout, application icon, and Windows GUI subsystem introduced in v0.3.1.
+
+### v0.3.3
+- Moved `market` from the exchange level to each individual ticker rule.
+- Removed the exchange-level `side` fallback and the legacy string-only `symbols` format.
+- Added simultaneous multi-market support on the same exchange, so the same ticker can run on `spot` and `futures` / `swap` / `linear` at the same time.
+- Changed GUI-generated `config.toml` output to compact inline ticker tables instead of `[[exchange.symbols]]` arrays of tables.
+- Added an independent market control to every ticker row in the GUI.
+- Added tolerant symbol input: `btc`, `btcusdt`, `btc/usdt`, `btc\usdt`, `btcusdc`, `btc/usdc`, and `btc\usdc`.
+- Added automatic symbol normalization to canonical `BASE/USDT` or `BASE/USDC` form when saving or starting the engine.
+- Added USDT and USDC quote support for all configured exchange markets.
+- Duplicate validation now applies to the normalized `market + symbol` pair, allowing the same symbol on different markets while preventing duplicate workers on the same market.
+- Optimized scrolling for the low-resource `tiny-skia` renderer by replacing per-ticker market dropdowns with lightweight two-state market buttons and keeping the static header/settings outside the scrolling clip layer.
+
