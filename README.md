@@ -1,6 +1,6 @@
 # Limit Canceller
 
-Limit Canceller is a lightweight Rust application for automatically monitoring and cancelling open orders on Binance, OKX, and Bybit. It supports exchange-specific markets, independent ticker lists, per-ticker cancellation rules (`buy`, `sell`, or `both`), millisecond polling, API rate-limit handling, and a compact Windows GUI for managing configuration and controlling the cancellation engine.
+Limit Canceller is a lightweight Rust application for automatically monitoring and cancelling open orders on Binance, OKX, and Bybit. It supports exchange-specific markets, independent ticker lists, per-ticker cancellation rules (`buy`, `sell`, or `both`), millisecond polling, API rate-limit handling, and a compact Windows GUI for managing configuration and controlling the cancellation engine. The GUI is English by default and can be switched to Russian from the application settings.
 
 ## GitHub repository:
 
@@ -72,3 +72,13 @@ https://github.com/Snol-std/limit-canceller
 - Added a single-worker Tokio executor for the GUI and asynchronous network engine to reduce idle resource usage.
 - Disabled GUI antialiasing and unnecessary `iced` default features for a lighter build.
 - Added release-build optimizations including LTO, a single codegen unit, symbol stripping, and `panic = "abort"`.
+
+
+
+### v0.3.2
+- Changed all default GUI text to English.
+- Added a GUI language selector with English and Russian translations.
+- Added localized labels, buttons, status messages, placeholders, exchange state text, and per-ticker cancellation-side names.
+- Added persistent `ui_language` configuration (`en` or `ru`), with English as the default for existing configurations.
+- Kept all source-code comments and technical documentation in English.
+- Preserved the low-resource `tiny-skia` renderer, single-worker Tokio executor, compact layout, application icon, and Windows GUI subsystem introduced in v0.3.1.

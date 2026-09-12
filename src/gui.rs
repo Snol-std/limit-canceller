@@ -9,10 +9,12 @@ use crate::config::{AppConfig, BinanceConfig, BybitConfig, OkxConfig, SymbolConf
 use crate::engine;
 use crate::exchange::CancelSide;
 
-const SIDES: [CancelSide; 3] = [CancelSide::Buy, CancelSide::Sell, CancelSide::Both];
 const BINANCE_MARKETS: [MarketChoice; 2] = [MarketChoice::Spot, MarketChoice::Futures];
 const OKX_MARKETS: [MarketChoice; 2] = [MarketChoice::Spot, MarketChoice::Swap];
 const BYBIT_MARKETS: [MarketChoice; 2] = [MarketChoice::Spot, MarketChoice::Linear];
+const LANGUAGES: [Language; 2] = [Language::English, Language::Russian];
+const SIDES_EN: [SideChoice; 3] = [SideChoice::BuyEn, SideChoice::SellEn, SideChoice::BothEn];
+const SIDES_RU: [SideChoice; 3] = [SideChoice::BuyRu, SideChoice::SellRu, SideChoice::BothRu];
 
 const WINDOW_WIDTH: f32 = 820.0;
 const WINDOW_HEIGHT: f32 = 620.0;
@@ -25,6 +27,197 @@ const BODY_SIZE: u32 = 11;
 const SMALL_SIZE: u32 = 10;
 const FIELD_PADDING: [u16; 2] = [4, 6];
 const BUTTON_PADDING: [u16; 2] = [4, 8];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Language {
+    English,
+    Russian,
+}
+
+impl Language {
+    fn code(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::Russian => "ru",
+        }
+    }
+
+    fn parse(value: Option<&str>) -> Self {
+        match value.unwrap_or("en").trim().to_ascii_lowercase().as_str() {
+            "ru" | "rus" | "russian" => Self::Russian,
+            _ => Self::English,
+        }
+    }
+}
+
+impl std::fmt::Display for Language {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::English => "English",
+            Self::Russian => "Русский",
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct UiText {
+    ready: &'static str,
+    config_label: &'static str,
+    running_badge: &'static str,
+    stopped_badge: &'static str,
+    save: &'static str,
+    start: &'static str,
+    stop: &'static str,
+    polling: &'static str,
+    language: &'static str,
+    changes_running: &'static str,
+    enabled: &'static str,
+    disabled_empty_keys: &'static str,
+    no_tickers: &'static str,
+    api_key: &'static str,
+    api_secret: &'static str,
+    passphrase: &'static str,
+    market: &'static str,
+    clear_keys: &'static str,
+    tickers_cancel_side: &'static str,
+    add_ticker: &'static str,
+    remove: &'static str,
+    credentials_cleared: &'static str,
+    saved_running: &'static str,
+    saved_prefix: &'static str,
+    save_failed: &'static str,
+    failed_to_start: &'static str,
+    configure_exchange: &'static str,
+    running_status: &'static str,
+    stopped: &'static str,
+    engine_stopped: &'static str,
+    engine_error: &'static str,
+    failed_load_config: &'static str,
+}
+
+fn ui_text(language: Language) -> UiText {
+    match language {
+        Language::English => UiText {
+            ready: "Ready. Changes are saved to config.toml.",
+            config_label: "Config",
+            running_badge: "● RUNNING",
+            stopped_badge: "● STOPPED",
+            save: "Save",
+            start: "Start",
+            stop: "Stop",
+            polling: "Polling, ms",
+            language: "Language",
+            changes_running: "Changes made while RUNNING are applied after restart.",
+            enabled: "enabled",
+            disabled_empty_keys: "disabled (empty keys)",
+            no_tickers: "No tickers configured. Add a ticker below.",
+            api_key: "API key",
+            api_secret: "API secret",
+            passphrase: "Passphrase",
+            market: "Market",
+            clear_keys: "Clear keys",
+            tickers_cancel_side: "Tickers / cancel side",
+            add_ticker: "+ Add ticker",
+            remove: "Remove",
+            credentials_cleared: "credentials cleared. Click Save to write the changes to disk.",
+            saved_running: "Saved. The engine is still running with the previous configuration snapshot; click Stop and Start to apply changes.",
+            saved_prefix: "Saved",
+            save_failed: "Save failed",
+            failed_to_start: "Failed to start",
+            configure_exchange: "configure api_key and api_secret for at least one exchange.",
+            running_status: "Running. Stop and start again to apply new settings.",
+            stopped: "Stopped.",
+            engine_stopped: "Engine stopped.",
+            engine_error: "Engine stopped with an error",
+            failed_load_config: "Failed to load config.toml",
+        },
+        Language::Russian => UiText {
+            ready: "Готово. Изменения сохраняются в config.toml.",
+            config_label: "Конфиг",
+            running_badge: "● РАБОТАЕТ",
+            stopped_badge: "● ОСТАНОВЛЕНО",
+            save: "Сохранить",
+            start: "Старт",
+            stop: "Стоп",
+            polling: "Опрос, мс",
+            language: "Язык",
+            changes_running: "Изменения во время работы применяются после перезапуска.",
+            enabled: "включена",
+            disabled_empty_keys: "выключена (пустые ключи)",
+            no_tickers: "Нет тикеров. Добавьте тикер ниже.",
+            api_key: "API-ключ",
+            api_secret: "API-секрет",
+            passphrase: "Парольная фраза",
+            market: "Рынок",
+            clear_keys: "Очистить ключи",
+            tickers_cancel_side: "Тикеры / сторона снятия",
+            add_ticker: "+ Добавить тикер",
+            remove: "Удалить",
+            credentials_cleared: "ключи API очищены. Нажмите «Сохранить», чтобы записать изменения на диск.",
+            saved_running: "Сохранено. Алгоритм продолжает работать с предыдущей копией настроек; нажмите «Стоп», затем «Старт», чтобы применить изменения.",
+            saved_prefix: "Сохранено",
+            save_failed: "Ошибка сохранения",
+            failed_to_start: "Не удалось запустить",
+            configure_exchange: "укажите api_key и api_secret хотя бы для одной биржи.",
+            running_status: "Запущено. Чтобы применить новые настройки, остановите и запустите снова.",
+            stopped: "Остановлено.",
+            engine_stopped: "Алгоритм остановлен.",
+            engine_error: "Алгоритм остановлен с ошибкой",
+            failed_load_config: "Не удалось загрузить config.toml",
+        },
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SideChoice {
+    BuyEn,
+    SellEn,
+    BothEn,
+    BuyRu,
+    SellRu,
+    BothRu,
+}
+
+impl SideChoice {
+    fn options(language: Language) -> &'static [Self] {
+        match language {
+            Language::English => &SIDES_EN,
+            Language::Russian => &SIDES_RU,
+        }
+    }
+
+    fn from_cancel_side(side: CancelSide, language: Language) -> Self {
+        match (language, side) {
+            (Language::English, CancelSide::Buy) => Self::BuyEn,
+            (Language::English, CancelSide::Sell) => Self::SellEn,
+            (Language::English, CancelSide::Both) => Self::BothEn,
+            (Language::Russian, CancelSide::Buy) => Self::BuyRu,
+            (Language::Russian, CancelSide::Sell) => Self::SellRu,
+            (Language::Russian, CancelSide::Both) => Self::BothRu,
+        }
+    }
+
+    fn cancel_side(self) -> CancelSide {
+        match self {
+            Self::BuyEn | Self::BuyRu => CancelSide::Buy,
+            Self::SellEn | Self::SellRu => CancelSide::Sell,
+            Self::BothEn | Self::BothRu => CancelSide::Both,
+        }
+    }
+}
+
+impl std::fmt::Display for SideChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::BuyEn => "buy",
+            Self::SellEn => "sell",
+            Self::BothEn => "both",
+            Self::BuyRu => "покупка",
+            Self::SellRu => "продажа",
+            Self::BothRu => "обе стороны",
+        })
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExchangeId {
@@ -112,10 +305,13 @@ impl ExchangeForm {
     }
 
     fn symbols_from_config(symbols: &[SymbolConfig], fallback: &str) -> Vec<SymbolForm> {
-        symbols.iter().map(|item| SymbolForm {
-            symbol: item.symbol().to_string(),
-            side: CancelSide::parse(item.side(fallback)).unwrap_or(CancelSide::Both),
-        }).collect()
+        symbols
+            .iter()
+            .map(|item| SymbolForm {
+                symbol: item.symbol().to_string(),
+                side: CancelSide::parse(item.side(fallback)).unwrap_or(CancelSide::Both),
+            })
+            .collect()
     }
 
     fn binance(config: Option<&BinanceConfig>) -> Self {
@@ -158,16 +354,20 @@ impl ExchangeForm {
     }
 
     fn detailed_symbols(&self) -> Vec<SymbolConfig> {
-        self.symbols.iter().map(|item| SymbolConfig::Detailed {
-            symbol: item.symbol.trim().to_string(),
-            side: Some(item.side.as_str().to_string()),
-        }).collect()
+        self.symbols
+            .iter()
+            .map(|item| SymbolConfig::Detailed {
+                symbol: item.symbol.trim().to_string(),
+                side: Some(item.side.as_str().to_string()),
+            })
+            .collect()
     }
 }
 
 struct State {
     config_path: String,
     poll_milliseconds: String,
+    language: Language,
     binance: ExchangeForm,
     okx: ExchangeForm,
     bybit: ExchangeForm,
@@ -179,6 +379,7 @@ struct State {
 #[derive(Debug, Clone)]
 enum Message {
     PollChanged(String),
+    LanguageChanged(Language),
     ApiKeyChanged(ExchangeId, String),
     ApiSecretChanged(ExchangeId, String),
     PassphraseChanged(String),
@@ -196,38 +397,48 @@ enum Message {
 
 impl State {
     fn boot() -> Self {
-        let config_path = std::env::args().nth(1).unwrap_or_else(|| "config.toml".to_string());
+        let config_path = std::env::args()
+            .nth(1)
+            .unwrap_or_else(|| "config.toml".to_string());
         match AppConfig::load_or_default(&config_path) {
             Ok(config) => {
-                let poll = config.poll_milliseconds
+                let language = Language::parse(config.ui_language.as_deref());
+                let poll = config
+                    .poll_milliseconds
                     .or_else(|| config.poll_seconds.and_then(|s| s.checked_mul(1000)))
                     .unwrap_or(5000);
                 Self {
                     config_path,
                     poll_milliseconds: poll.to_string(),
+                    language,
                     binance: ExchangeForm::binance(config.binance.as_ref()),
                     okx: ExchangeForm::okx(config.okx.as_ref()),
                     bybit: ExchangeForm::bybit(config.bybit.as_ref()),
-                    status: "Ready. Changes are saved to config.toml.".to_string(),
+                    status: ui_text(language).ready.to_string(),
                     running: false,
                     run_handle: None,
                 }
             }
             Err(error) => {
+                let language = Language::English;
                 let mut state = Self::from_config(config_path, AppConfig::default());
-                state.status = format!("Failed to load config.toml: {error:#}");
+                state.language = language;
+                state.status = format!("{}: {error:#}", ui_text(language).failed_load_config);
                 state
             }
         }
     }
 
     fn from_config(config_path: String, config: AppConfig) -> Self {
-        let poll = config.poll_milliseconds
+        let language = Language::parse(config.ui_language.as_deref());
+        let poll = config
+            .poll_milliseconds
             .or_else(|| config.poll_seconds.and_then(|s| s.checked_mul(1000)))
             .unwrap_or(5000);
         Self {
             config_path,
             poll_milliseconds: poll.to_string(),
+            language,
             binance: ExchangeForm::binance(config.binance.as_ref()),
             okx: ExchangeForm::okx(config.okx.as_ref()),
             bybit: ExchangeForm::bybit(config.bybit.as_ref()),
@@ -254,12 +465,16 @@ impl State {
     }
 
     fn build_config(&self) -> Result<AppConfig, String> {
-        let poll = self.poll_milliseconds.trim().parse::<u64>()
+        let poll = self
+            .poll_milliseconds
+            .trim()
+            .parse::<u64>()
             .map_err(|_| "poll_milliseconds must be an integer".to_string())?;
 
         let config = AppConfig {
             poll_milliseconds: Some(poll),
             poll_seconds: None,
+            ui_language: Some(self.language.code().to_string()),
             binance: Some(BinanceConfig {
                 api_key: self.binance.api_key.trim().to_string(),
                 api_secret: self.binance.api_secret.trim().to_string(),
@@ -289,7 +504,9 @@ impl State {
 
     fn save_config(&mut self) -> Result<AppConfig, String> {
         let config = self.build_config()?;
-        config.save(&self.config_path).map_err(|error| format!("{error:#}"))?;
+        config
+            .save(&self.config_path)
+            .map_err(|error| format!("{error:#}"))?;
         Ok(config)
     }
 }
@@ -327,7 +544,7 @@ impl iced::Executor for SingleWorkerTokio {
 pub fn run() -> iced::Result {
     iced::application(State::boot, update, view)
         .executor::<SingleWorkerTokio>()
-        .title("Limit Canceller 0.3.1")
+        .title("Limit Canceller 0.3.2")
         .theme(Theme::Dark)
         .antialiasing(false)
         .window(iced::window::Settings {
@@ -341,19 +558,25 @@ pub fn run() -> iced::Result {
 }
 
 fn app_icon() -> iced::window::Icon {
-    iced::window::icon::from_rgba(
-        include_bytes!("../assets/app.rgba").to_vec(),
-        64,
-        64,
-    )
-    .expect("embedded application icon must be valid RGBA")
+    iced::window::icon::from_rgba(include_bytes!("../assets/app.rgba").to_vec(), 64, 64)
+        .expect("embedded application icon must be valid RGBA")
 }
 
 fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::PollChanged(value) => state.poll_milliseconds = value,
+        Message::LanguageChanged(language) => {
+            state.language = language;
+            state.status = if state.running {
+                ui_text(language).running_status.to_string()
+            } else {
+                ui_text(language).ready.to_string()
+            };
+        }
         Message::ApiKeyChanged(exchange, value) => state.exchange_mut(exchange).api_key = value,
-        Message::ApiSecretChanged(exchange, value) => state.exchange_mut(exchange).api_secret = value,
+        Message::ApiSecretChanged(exchange, value) => {
+            state.exchange_mut(exchange).api_secret = value
+        }
         Message::PassphraseChanged(value) => state.okx.passphrase = value,
         Message::MarketChanged(exchange, market) => state.exchange_mut(exchange).market = market,
         Message::SymbolChanged(exchange, index, value) => {
@@ -372,44 +595,58 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }),
         Message::RemoveSymbol(exchange, index) => {
             let symbols = &mut state.exchange_mut(exchange).symbols;
-            if index < symbols.len() { symbols.remove(index); }
+            if index < symbols.len() {
+                symbols.remove(index);
+            }
         }
         Message::ClearCredentials(exchange) => {
             let form = state.exchange_mut(exchange);
             form.api_key.clear();
             form.api_secret.clear();
             form.passphrase.clear();
-            state.status = format!("{}: credentials cleared. Click Save to write the changes to disk.", exchange.title());
+            state.status = format!(
+                "{}: {}",
+                exchange.title(),
+                ui_text(state.language).credentials_cleared
+            );
         }
         Message::Save => match state.save_config() {
             Ok(_) => {
+                let t = ui_text(state.language);
                 state.status = if state.running {
-                    "Saved. The engine is still running with the previous configuration snapshot; click Stop and Start to apply changes.".to_string()
+                    t.saved_running.to_string()
                 } else {
-                    format!("Saved: {}", state.config_path)
+                    format!("{}: {}", t.saved_prefix, state.config_path)
                 };
             }
-            Err(error) => state.status = format!("Save failed: {error}"),
+            Err(error) => {
+                state.status = format!("{}: {error}", ui_text(state.language).save_failed)
+            }
         },
         Message::Start => {
-            if state.running { return Task::none(); }
+            if state.running {
+                return Task::none();
+            }
             let config = match state.save_config() {
                 Ok(config) => config,
                 Err(error) => {
-                    state.status = format!("Failed to start: {error}");
+                    state.status = format!(
+                        "{}: {error}",
+                        ui_text(state.language).failed_to_start
+                    );
                     return Task::none();
                 }
             };
             if !config.has_enabled_exchange() {
-                state.status = "Failed to start: configure api_key and api_secret for at least one exchange.".to_string();
+                let t = ui_text(state.language);
+                state.status = format!("{}: {}", t.failed_to_start, t.configure_exchange);
                 return Task::none();
             }
             state.running = true;
-            state.status = "Running. Stop and start again to apply new settings.".to_string();
-            let task = Task::perform(
-                engine::run(config),
-                |result| Message::EngineFinished(result.map_err(|error| format!("{error:#}"))),
-            );
+            state.status = ui_text(state.language).running_status.to_string();
+            let task = Task::perform(engine::run(config), |result| {
+                Message::EngineFinished(result.map_err(|error| format!("{error:#}")))
+            });
             let (task, handle) = task.abortable();
             state.run_handle = Some(handle);
             return task;
@@ -419,14 +656,15 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 handle.abort();
             }
             state.running = false;
-            state.status = "Stopped.".to_string();
+            state.status = ui_text(state.language).stopped.to_string();
         }
         Message::EngineFinished(result) => {
             state.run_handle = None;
             state.running = false;
+            let t = ui_text(state.language);
             state.status = match result {
-                Ok(()) => "Engine stopped.".to_string(),
-                Err(error) => format!("Engine stopped with an error: {error}"),
+                Ok(()) => t.engine_stopped.to_string(),
+                Err(error) => format!("{}: {error}", t.engine_error),
             };
         }
     }
@@ -434,38 +672,43 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
 }
 
 fn view(state: &State) -> Element<'_, Message> {
-    let status_text = if state.running { "● RUNNING" } else { "● STOPPED" };
+    let t = ui_text(state.language);
+    let status_text = if state.running {
+        t.running_badge
+    } else {
+        t.stopped_badge
+    };
 
     let start = if state.running {
-        button(text("Start").size(BODY_SIZE))
+        button(text(t.start).size(BODY_SIZE))
             .padding(BUTTON_PADDING)
             .style(button::success)
     } else {
-        button(text("Start").size(BODY_SIZE))
+        button(text(t.start).size(BODY_SIZE))
             .padding(BUTTON_PADDING)
             .style(button::success)
             .on_press(Message::Start)
     };
     let stop = if state.running {
-        button(text("Stop").size(BODY_SIZE))
+        button(text(t.stop).size(BODY_SIZE))
             .padding(BUTTON_PADDING)
             .style(button::danger)
             .on_press(Message::Stop)
     } else {
-        button(text("Stop").size(BODY_SIZE))
+        button(text(t.stop).size(BODY_SIZE))
             .padding(BUTTON_PADDING)
             .style(button::danger)
     };
 
     let header = row![
         column![
-            text("Limit Canceller 0.3.1").size(TITLE_SIZE),
-            text(format!("Config: {}", state.config_path)).size(SMALL_SIZE),
+            text("Limit Canceller 0.3.2").size(TITLE_SIZE),
+            text(format!("{}: {}", t.config_label, state.config_path)).size(SMALL_SIZE),
         ]
         .spacing(2)
         .width(Fill),
         text(status_text).size(BODY_SIZE),
-        button(text("Save").size(BODY_SIZE))
+        button(text(t.save).size(BODY_SIZE))
             .padding(BUTTON_PADDING)
             .style(button::primary)
             .on_press(Message::Save),
@@ -478,14 +721,18 @@ fn view(state: &State) -> Element<'_, Message> {
 
     let settings = container(
         row![
-            text("Polling, ms").size(BODY_SIZE).width(Length::Fixed(78.0)),
+            text(t.polling).size(BODY_SIZE).width(Length::Fixed(78.0)),
             text_input("100", &state.poll_milliseconds)
                 .on_input(Message::PollChanged)
                 .size(BODY_SIZE)
                 .padding(FIELD_PADDING)
                 .width(Length::Fixed(92.0)),
-            text("Changes made while RUNNING are applied after restart.")
-                .size(SMALL_SIZE),
+            text(t.language).size(BODY_SIZE),
+            pick_list(LANGUAGES, Some(state.language), Message::LanguageChanged)
+                .text_size(BODY_SIZE)
+                .padding(FIELD_PADDING)
+                .width(Length::Fixed(100.0)),
+            text(t.changes_running).size(SMALL_SIZE),
         ]
         .spacing(8)
         .align_y(iced::alignment::Vertical::Center),
@@ -513,13 +760,18 @@ fn view(state: &State) -> Element<'_, Message> {
 }
 
 fn exchange_card(state: &State, exchange: ExchangeId) -> Element<'_, Message> {
+    let t = ui_text(state.language);
     let form = state.exchange(exchange);
     let enabled = !form.api_key.trim().is_empty() && !form.api_secret.trim().is_empty();
-    let state_label = if enabled { "enabled" } else { "disabled (empty keys)" };
+    let state_label = if enabled {
+        t.enabled
+    } else {
+        t.disabled_empty_keys
+    };
 
     let mut symbols: Column<'_, Message> = Column::new().spacing(5).width(Fill);
     if form.symbols.is_empty() {
-        symbols = symbols.push(text("No tickers configured. Add a ticker below.").size(SMALL_SIZE));
+        symbols = symbols.push(text(t.no_tickers).size(SMALL_SIZE));
     } else {
         for (index, item) in form.symbols.iter().enumerate() {
             let symbol_input = text_input("BTC/USDT", &item.symbol)
@@ -528,14 +780,14 @@ fn exchange_card(state: &State, exchange: ExchangeId) -> Element<'_, Message> {
                 .padding(FIELD_PADDING)
                 .width(Length::FillPortion(5));
             let side = pick_list(
-                SIDES,
-                Some(item.side),
-                move |value| Message::SideChanged(exchange, index, value),
+                SideChoice::options(state.language),
+                Some(SideChoice::from_cancel_side(item.side, state.language)),
+                move |value| Message::SideChanged(exchange, index, value.cancel_side()),
             )
             .text_size(BODY_SIZE)
             .padding(FIELD_PADDING)
             .width(Length::FillPortion(2));
-            let remove = button(text("Remove").size(BODY_SIZE))
+            let remove = button(text(t.remove).size(BODY_SIZE))
                 .padding(BUTTON_PADDING)
                 .style(button::danger)
                 .on_press(Message::RemoveSymbol(exchange, index));
@@ -548,24 +800,22 @@ fn exchange_card(state: &State, exchange: ExchangeId) -> Element<'_, Message> {
         }
     }
 
-    let key_input = text_input("API key", &form.api_key)
+    let key_input = text_input(t.api_key, &form.api_key)
         .on_input(move |value| Message::ApiKeyChanged(exchange, value))
         .size(BODY_SIZE)
         .padding(FIELD_PADDING)
         .width(Length::FillPortion(1));
-    let secret_input = text_input("API secret", &form.api_secret)
+    let secret_input = text_input(t.api_secret, &form.api_secret)
         .secure(true)
         .on_input(move |value| Message::ApiSecretChanged(exchange, value))
         .size(BODY_SIZE)
         .padding(FIELD_PADDING)
         .width(Length::FillPortion(1));
 
-    let mut credentials: Row<'_, Message> = row![key_input, secret_input]
-        .spacing(6)
-        .width(Fill);
+    let mut credentials: Row<'_, Message> = row![key_input, secret_input].spacing(6).width(Fill);
     if exchange == ExchangeId::Okx {
         credentials = credentials.push(
-            text_input("Passphrase", &form.passphrase)
+            text_input(t.passphrase, &form.passphrase)
                 .secure(true)
                 .on_input(Message::PassphraseChanged)
                 .size(BODY_SIZE)
@@ -581,7 +831,7 @@ fn exchange_card(state: &State, exchange: ExchangeId) -> Element<'_, Message> {
         ]
         .spacing(1)
         .width(Fill),
-        text("Market").size(BODY_SIZE),
+        text(t.market).size(BODY_SIZE),
         pick_list(
             MarketChoice::options(exchange),
             Some(form.market),
@@ -590,7 +840,7 @@ fn exchange_card(state: &State, exchange: ExchangeId) -> Element<'_, Message> {
         .text_size(BODY_SIZE)
         .padding(FIELD_PADDING)
         .width(Length::Fixed(112.0)),
-        button(text("Clear keys").size(BODY_SIZE))
+        button(text(t.clear_keys).size(BODY_SIZE))
             .padding(BUTTON_PADDING)
             .style(button::danger)
             .on_press(Message::ClearCredentials(exchange)),
@@ -603,9 +853,9 @@ fn exchange_card(state: &State, exchange: ExchangeId) -> Element<'_, Message> {
         column![
             top,
             credentials,
-            text("Tickers / cancel side").size(BODY_SIZE),
+            text(t.tickers_cancel_side).size(BODY_SIZE),
             symbols,
-            button(text("+ Add ticker").size(BODY_SIZE))
+            button(text(t.add_ticker).size(BODY_SIZE))
                 .padding(BUTTON_PADDING)
                 .style(button::secondary)
                 .on_press(Message::AddSymbol(exchange)),

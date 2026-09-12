@@ -1,5 +1,6 @@
 # Copy this file to config.toml and fill in the required sections.
 poll_milliseconds = 250
+ui_language = "en" # en | ru
 
 # side: buy | sell | both
 # The cancellation side is configured independently for each ticker.

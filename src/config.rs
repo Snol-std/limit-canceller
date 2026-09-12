@@ -43,6 +43,8 @@ pub struct AppConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poll_seconds: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binance: Option<BinanceConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub okx: Option<OkxConfig>,
@@ -109,6 +111,7 @@ impl Default for AppConfig {
         Self {
             poll_milliseconds: Some(100),
             poll_seconds: None,
+            ui_language: Some("en".to_string()),
             binance: Some(BinanceConfig::default()),
             okx: Some(OkxConfig::default()),
             bybit: Some(BybitConfig::default()),
@@ -182,6 +185,11 @@ impl AppConfig {
 
     pub fn validate(&self) -> Result<()> {
         self.poll_interval()?;
+        if let Some(language) = &self.ui_language {
+            if !matches!(language.trim().to_ascii_lowercase().as_str(), "en" | "ru") {
+                bail!("unsupported ui_language {language:?}; allowed values: en, ru");
+            }
+        }
         fn valid_side(side: &str) -> bool {
             matches!(side.trim().to_ascii_lowercase().as_str(), "buy" | "sell" | "both")
         }
@@ -313,4 +321,12 @@ mod tests {
     fn unknown_settings_fail() {
         assert!(toml::from_str::<AppConfig>("poll_miliseconds=10").is_err());
     }
+    #[test]
+    fn ui_language_is_optional_and_validated() {
+        assert!(parse("ui_language = \"en\"").validate().is_ok());
+        assert!(parse("ui_language = \"ru\"").validate().is_ok());
+        assert!(parse("").validate().is_ok());
+        assert!(parse("ui_language = \"de\"").validate().is_err());
+    }
+
 }
