@@ -2,6 +2,8 @@
 
 Limit Canceller is a lightweight Rust application for automatically monitoring and cancelling open orders on Binance, OKX, and Bybit. It supports exchange-specific markets, independent ticker lists, per-ticker cancellation rules (`buy`, `sell`, or `both`), millisecond polling, API rate-limit handling, and a compact Windows GUI for managing configuration and controlling the cancellation engine. The GUI is English by default and can be switched to Russian from the application settings.
 
+**This archive is an experimental eframe/egui frontend.** The exchange engine, configuration format, symbol normalization, API signing, polling, and cancellation logic are unchanged. The `iced` GUI dependency has been removed completely. The native frontend uses `eframe 0.36.2` with the `glow` OpenGL renderer only; `wgpu` is not included.
+
 ## GitHub repository:
 
 https://github.com/Snol-std/limit-canceller
@@ -86,10 +88,22 @@ https://github.com/Snol-std/limit-canceller
 - Removed the exchange-level `side` fallback and the legacy string-only `symbols` format.
 - Added simultaneous multi-market support on the same exchange, so the same ticker can run on `spot` and `futures` / `swap` / `linear` at the same time.
 - Changed GUI-generated `config.toml` output to compact inline ticker tables instead of `[[exchange.symbols]]` arrays of tables.
-- Added an independent market control to every ticker row in the GUI.
+- Added a market selector to every ticker row in the GUI.
 - Added tolerant symbol input: `btc`, `btcusdt`, `btc/usdt`, `btc\usdt`, `btcusdc`, `btc/usdc`, and `btc\usdc`.
 - Added automatic symbol normalization to canonical `BASE/USDT` or `BASE/USDC` form when saving or starting the engine.
 - Added USDT and USDC quote support for all configured exchange markets.
 - Duplicate validation now applies to the normalized `market + symbol` pair, allowing the same symbol on different markets while preventing duplicate workers on the same market.
-- Optimized scrolling for the low-resource `tiny-skia` renderer by replacing per-ticker market dropdowns with lightweight two-state market buttons and keeping the static header/settings outside the scrolling clip layer.
 
+
+### v0.3.4-egui.1 (experimental)
+- Replaced the entire `iced` frontend with `eframe` / `egui`.
+- Removed all `iced`, `iced_tiny_skia`, and `wgpu` dependencies from this build.
+- Uses the lightweight `eframe` Glow/OpenGL renderer with default features disabled.
+- Preserves the existing Binance, OKX, and Bybit backend and the v0.3.3 `config.toml` format.
+- Preserves English/Russian UI localization, masked API secrets, Save/Start/Stop controls, per-ticker market selection, per-ticker cancellation side, USDT/USDC symbol normalization, and simultaneous spot/futures operation.
+- New ticker rows default to Binance `futures`, OKX `swap`, and Bybit `linear`.
+- Market selection is a colored two-state button; side selection remains a compact dropdown.
+- Keeps the header/settings outside the scroll area so only exchange cards scroll.
+- Uses one Tokio worker thread for the network engine. The egui thread stays event-driven and the engine requests a repaint only when it finishes.
+- Disables egui hover/fade animations and GPU multisampling for a lower-overhead baseline.
+- Keeps the Windows GUI subsystem and existing application icon.

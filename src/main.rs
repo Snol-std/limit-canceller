@@ -1,13 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-//! Limit Canceller: iced GUI plus the open-order cancellation engine.
+//! Limit Canceller: eframe/egui GUI plus the open-order cancellation engine.
 mod config;
 mod engine;
 mod exchange;
 mod gui;
 mod symbol;
 
-fn main() -> iced::Result {
+fn main() -> eframe::Result {
     tracing_subscriber::fmt()
         .with_ansi(false)
         .with_env_filter(

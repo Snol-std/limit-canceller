@@ -1,30 +1,33 @@
-//! Iced GUI for managing config.toml and controlling the cancellation engine.
+//! eframe/egui GUI for managing config.toml and controlling the cancellation engine.
+//!
+//! This experimental frontend intentionally uses the lightweight Glow/OpenGL
+//! renderer instead of wgpu. The trading engine and configuration format are
+//! unchanged from the iced build.
 
-use iced::task::Handle;
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input, Column, Row};
-use iced::{Element, Fill, Length, Task, Theme};
-use std::future::Future;
+use eframe::egui;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use crate::config::{AppConfig, BinanceConfig, BybitConfig, OkxConfig, SymbolConfig};
 use crate::engine;
 use crate::exchange::CancelSide;
 use crate::symbol::Symbol;
 
-const LANGUAGES: [Language; 2] = [Language::English, Language::Russian];
-const SIDES_EN: [SideChoice; 3] = [SideChoice::BuyEn, SideChoice::SellEn, SideChoice::BothEn];
-const SIDES_RU: [SideChoice; 3] = [SideChoice::BuyRu, SideChoice::SellRu, SideChoice::BothRu];
-
 const WINDOW_WIDTH: f32 = 820.0;
 const WINDOW_HEIGHT: f32 = 620.0;
 const WINDOW_MIN_WIDTH: f32 = 680.0;
 const WINDOW_MIN_HEIGHT: f32 = 480.0;
 
-const TITLE_SIZE: u32 = 20;
-const EXCHANGE_TITLE_SIZE: u32 = 16;
-const BODY_SIZE: u32 = 11;
-const SMALL_SIZE: u32 = 10;
-const FIELD_PADDING: [u16; 2] = [4, 6];
-const BUTTON_PADDING: [u16; 2] = [4, 8];
+const ROW_HEIGHT: f32 = 25.0;
+const MARKET_WIDTH: f32 = 88.0;
+const SIDE_WIDTH: f32 = 112.0;
+const REMOVE_WIDTH: f32 = 72.0;
+
+const MARKET_BUTTON: egui::Color32 = egui::Color32::from_rgb(54, 82, 138);
+const SAVE_BUTTON: egui::Color32 = egui::Color32::from_rgb(46, 82, 140);
+const START_BUTTON: egui::Color32 = egui::Color32::from_rgb(38, 112, 75);
+const STOP_BUTTON: egui::Color32 = egui::Color32::from_rgb(145, 52, 58);
+const REMOVE_BUTTON: egui::Color32 = egui::Color32::from_rgb(125, 47, 52);
+const SECONDARY_BUTTON: egui::Color32 = egui::Color32::from_rgb(62, 68, 78);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Language {
@@ -46,14 +49,12 @@ impl Language {
             _ => Self::English,
         }
     }
-}
 
-impl std::fmt::Display for Language {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
+    fn label(self) -> &'static str {
+        match self {
             Self::English => "English",
             Self::Russian => "Русский",
-        })
+        }
     }
 }
 
@@ -163,58 +164,7 @@ fn ui_text(language: Language) -> UiText {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SideChoice {
-    BuyEn,
-    SellEn,
-    BothEn,
-    BuyRu,
-    SellRu,
-    BothRu,
-}
-
-impl SideChoice {
-    fn options(language: Language) -> &'static [Self] {
-        match language {
-            Language::English => &SIDES_EN,
-            Language::Russian => &SIDES_RU,
-        }
-    }
-
-    fn from_cancel_side(side: CancelSide, language: Language) -> Self {
-        match (language, side) {
-            (Language::English, CancelSide::Buy) => Self::BuyEn,
-            (Language::English, CancelSide::Sell) => Self::SellEn,
-            (Language::English, CancelSide::Both) => Self::BothEn,
-            (Language::Russian, CancelSide::Buy) => Self::BuyRu,
-            (Language::Russian, CancelSide::Sell) => Self::SellRu,
-            (Language::Russian, CancelSide::Both) => Self::BothRu,
-        }
-    }
-
-    fn cancel_side(self) -> CancelSide {
-        match self {
-            Self::BuyEn | Self::BuyRu => CancelSide::Buy,
-            Self::SellEn | Self::SellRu => CancelSide::Sell,
-            Self::BothEn | Self::BothRu => CancelSide::Both,
-        }
-    }
-}
-
-impl std::fmt::Display for SideChoice {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::BuyEn => "buy",
-            Self::SellEn => "sell",
-            Self::BothEn => "both",
-            Self::BuyRu => "покупка",
-            Self::SellRu => "продажа",
-            Self::BothRu => "обе стороны",
-        })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum ExchangeId {
     Binance,
     Okx,
@@ -258,13 +208,14 @@ impl MarketChoice {
         }
     }
 
-    /// Returns the other market available for this exchange.
-    ///
-    /// A button is used instead of a per-row `pick_list` because the software
-    /// `tiny-skia` renderer in iced 0.14 becomes expensive when many clipped
-    /// dropdown widgets are repainted while scrolling. Each exchange has only
-    /// two supported markets, so a direct toggle keeps the same functionality
-    /// with a much cheaper widget tree.
+    fn futures_default(exchange: ExchangeId) -> Self {
+        match exchange {
+            ExchangeId::Binance => Self::Futures,
+            ExchangeId::Okx => Self::Swap,
+            ExchangeId::Bybit => Self::Linear,
+        }
+    }
+
     fn toggled(self, exchange: ExchangeId) -> Self {
         match exchange {
             ExchangeId::Binance => match self {
@@ -280,12 +231,6 @@ impl MarketChoice {
                 _ => Self::Linear,
             },
         }
-    }
-}
-
-impl std::fmt::Display for MarketChoice {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
     }
 }
 
@@ -305,7 +250,7 @@ struct ExchangeForm {
 }
 
 impl ExchangeForm {
-    fn blank(_exchange: ExchangeId) -> Self {
+    fn blank() -> Self {
         Self {
             api_key: String::new(),
             api_secret: String::new(),
@@ -333,7 +278,7 @@ impl ExchangeForm {
                 passphrase: String::new(),
                 symbols: Self::symbols_from_config(&c.symbols, ExchangeId::Binance),
             },
-            None => Self::blank(ExchangeId::Binance),
+            None => Self::blank(),
         }
     }
 
@@ -345,7 +290,7 @@ impl ExchangeForm {
                 passphrase: c.passphrase.clone(),
                 symbols: Self::symbols_from_config(&c.symbols, ExchangeId::Okx),
             },
-            None => Self::blank(ExchangeId::Okx),
+            None => Self::blank(),
         }
     }
 
@@ -357,7 +302,7 @@ impl ExchangeForm {
                 passphrase: String::new(),
                 symbols: Self::symbols_from_config(&c.symbols, ExchangeId::Bybit),
             },
-            None => Self::blank(ExchangeId::Bybit),
+            None => Self::blank(),
         }
     }
 
@@ -391,55 +336,30 @@ struct State {
     bybit: ExchangeForm,
     status: String,
     running: bool,
-    run_handle: Option<Handle>,
-}
-
-#[derive(Debug, Clone)]
-enum Message {
-    PollChanged(String),
-    LanguageChanged(Language),
-    ApiKeyChanged(ExchangeId, String),
-    ApiSecretChanged(ExchangeId, String),
-    PassphraseChanged(String),
-    MarketChanged(ExchangeId, usize, MarketChoice),
-    SymbolChanged(ExchangeId, usize, String),
-    SideChanged(ExchangeId, usize, CancelSide),
-    AddSymbol(ExchangeId),
-    RemoveSymbol(ExchangeId, usize),
-    ClearCredentials(ExchangeId),
-    Save,
-    Start,
-    Stop,
-    EngineFinished(Result<(), String>),
+    runtime: Option<tokio::runtime::Runtime>,
+    run_handle: Option<tokio::task::JoinHandle<()>>,
+    engine_rx: Option<Receiver<Result<(), String>>>,
 }
 
 impl State {
-    fn boot() -> Self {
+    fn boot(cc: &eframe::CreationContext<'_>) -> Self {
+        configure_egui(&cc.egui_ctx);
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("failed to create Tokio runtime");
+
         let config_path = std::env::args()
             .nth(1)
             .unwrap_or_else(|| "config.toml".to_string());
+
         match AppConfig::load_or_default(&config_path) {
-            Ok(config) => {
-                let language = Language::parse(config.ui_language.as_deref());
-                let poll = config
-                    .poll_milliseconds
-                    .or_else(|| config.poll_seconds.and_then(|s| s.checked_mul(1000)))
-                    .unwrap_or(5000);
-                Self {
-                    config_path,
-                    poll_milliseconds: poll.to_string(),
-                    language,
-                    binance: ExchangeForm::binance(config.binance.as_ref()),
-                    okx: ExchangeForm::okx(config.okx.as_ref()),
-                    bybit: ExchangeForm::bybit(config.bybit.as_ref()),
-                    status: ui_text(language).ready.to_string(),
-                    running: false,
-                    run_handle: None,
-                }
-            }
+            Ok(config) => Self::from_config(config_path, config, runtime),
             Err(error) => {
                 let language = Language::English;
-                let mut state = Self::from_config(config_path, AppConfig::default());
+                let mut state = Self::from_config(config_path, AppConfig::default(), runtime);
                 state.language = language;
                 state.status = format!("{}: {error:#}", ui_text(language).failed_load_config);
                 state
@@ -447,12 +367,17 @@ impl State {
         }
     }
 
-    fn from_config(config_path: String, config: AppConfig) -> Self {
+    fn from_config(
+        config_path: String,
+        config: AppConfig,
+        runtime: tokio::runtime::Runtime,
+    ) -> Self {
         let language = Language::parse(config.ui_language.as_deref());
         let poll = config
             .poll_milliseconds
-            .or_else(|| config.poll_seconds.and_then(|s| s.checked_mul(1000)))
+            .or_else(|| config.poll_seconds.and_then(|seconds| seconds.checked_mul(1000)))
             .unwrap_or(5000);
+
         Self {
             config_path,
             poll_milliseconds: poll.to_string(),
@@ -460,17 +385,11 @@ impl State {
             binance: ExchangeForm::binance(config.binance.as_ref()),
             okx: ExchangeForm::okx(config.okx.as_ref()),
             bybit: ExchangeForm::bybit(config.bybit.as_ref()),
-            status: String::new(),
+            status: ui_text(language).ready.to_string(),
             running: false,
+            runtime: Some(runtime),
             run_handle: None,
-        }
-    }
-
-    fn exchange(&self, id: ExchangeId) -> &ExchangeForm {
-        match id {
-            ExchangeId::Binance => &self.binance,
-            ExchangeId::Okx => &self.okx,
-            ExchangeId::Bybit => &self.bybit,
+            engine_rx: None,
         }
     }
 
@@ -510,6 +429,7 @@ impl State {
                 symbols: self.bybit.detailed_symbols(),
             }),
         };
+
         config.validate().map_err(|error| format!("{error:#}"))?;
         Ok(config)
     }
@@ -518,379 +438,448 @@ impl State {
         self.binance.normalize_symbols()?;
         self.okx.normalize_symbols()?;
         self.bybit.normalize_symbols()?;
+
         let config = self.build_config()?;
         config
             .save(&self.config_path)
             .map_err(|error| format!("{error:#}"))?;
         Ok(config)
     }
-}
 
-/// Lightweight executor for the GUI and network engine.
-///
-/// The default Tokio executor in iced creates a multi-thread runtime with a number of
-/// worker threads based on available CPUs. This application only needs one worker because
-/// all significant work is asynchronous HTTP I/O and timers.
-struct SingleWorkerTokio(tokio::runtime::Runtime);
-
-impl iced::Executor for SingleWorkerTokio {
-    fn new() -> Result<Self, iced::futures::io::Error> {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()
-            .map(Self)
-    }
-
-    fn spawn(&self, future: impl Future<Output = ()> + Send + 'static) {
-        let _ = self.0.spawn(future);
-    }
-
-    fn enter<R>(&self, f: impl FnOnce() -> R) -> R {
-        let _guard = self.0.enter();
-        f()
-    }
-
-    fn block_on<T>(&self, future: impl Future<Output = T>) -> T {
-        self.0.block_on(future)
-    }
-}
-
-pub fn run() -> iced::Result {
-    iced::application(State::boot, update, view)
-        .executor::<SingleWorkerTokio>()
-        .title("Limit Canceller 0.3.3")
-        .theme(Theme::Dark)
-        .antialiasing(false)
-        .window(iced::window::Settings {
-            size: iced::Size::new(WINDOW_WIDTH, WINDOW_HEIGHT),
-            min_size: Some(iced::Size::new(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)),
-            position: iced::window::Position::Centered,
-            icon: Some(app_icon()),
-            ..iced::window::Settings::default()
-        })
-        .run()
-}
-
-fn app_icon() -> iced::window::Icon {
-    iced::window::icon::from_rgba(include_bytes!("../assets/app.rgba").to_vec(), 64, 64)
-        .expect("embedded application icon must be valid RGBA")
-}
-
-fn update(state: &mut State, message: Message) -> Task<Message> {
-    match message {
-        Message::PollChanged(value) => state.poll_milliseconds = value,
-        Message::LanguageChanged(language) => {
-            state.language = language;
-            state.status = if state.running {
-                ui_text(language).running_status.to_string()
-            } else {
-                ui_text(language).ready.to_string()
-            };
-        }
-        Message::ApiKeyChanged(exchange, value) => state.exchange_mut(exchange).api_key = value,
-        Message::ApiSecretChanged(exchange, value) => {
-            state.exchange_mut(exchange).api_secret = value
-        }
-        Message::PassphraseChanged(value) => state.okx.passphrase = value,
-        Message::MarketChanged(exchange, index, market) => {
-            if let Some(item) = state.exchange_mut(exchange).symbols.get_mut(index) {
-                item.market = market;
-            }
-        }
-        Message::SymbolChanged(exchange, index, value) => {
-            if let Some(item) = state.exchange_mut(exchange).symbols.get_mut(index) {
-                item.symbol = value;
-            }
-        }
-        Message::SideChanged(exchange, index, side) => {
-            if let Some(item) = state.exchange_mut(exchange).symbols.get_mut(index) {
-                item.side = side;
-            }
-        }
-        Message::AddSymbol(exchange) => state.exchange_mut(exchange).symbols.push(SymbolForm {
-            market: match exchange {
-                ExchangeId::Binance => MarketChoice::Futures,
-                ExchangeId::Okx => MarketChoice::Swap,
-                ExchangeId::Bybit => MarketChoice::Linear,
-            },
-            symbol: String::new(),
-            side: CancelSide::Both,
-        }),
-        Message::RemoveSymbol(exchange, index) => {
-            let symbols = &mut state.exchange_mut(exchange).symbols;
-            if index < symbols.len() {
-                symbols.remove(index);
-            }
-        }
-        Message::ClearCredentials(exchange) => {
-            let form = state.exchange_mut(exchange);
-            form.api_key.clear();
-            form.api_secret.clear();
-            form.passphrase.clear();
-            state.status = format!(
-                "{}: {}",
-                exchange.title(),
-                ui_text(state.language).credentials_cleared
-            );
-        }
-        Message::Save => match state.save_config() {
+    fn save_clicked(&mut self) {
+        let t = ui_text(self.language);
+        match self.save_config() {
             Ok(_) => {
-                let t = ui_text(state.language);
-                state.status = if state.running {
+                self.status = if self.running {
                     t.saved_running.to_string()
                 } else {
-                    format!("{}: {}", t.saved_prefix, state.config_path)
+                    format!("{}: {}", t.saved_prefix, self.config_path)
                 };
             }
+            Err(error) => self.status = format!("{}: {error}", t.save_failed),
+        }
+    }
+
+    fn start_clicked(&mut self, ctx: &egui::Context) {
+        if self.running {
+            return;
+        }
+
+        let t = ui_text(self.language);
+        let config = match self.save_config() {
+            Ok(config) => config,
             Err(error) => {
-                state.status = format!("{}: {error}", ui_text(state.language).save_failed)
+                self.status = format!("{}: {error}", t.failed_to_start);
+                return;
             }
-        },
-        Message::Start => {
-            if state.running {
-                return Task::none();
-            }
-            let config = match state.save_config() {
-                Ok(config) => config,
-                Err(error) => {
-                    state.status = format!(
-                        "{}: {error}",
-                        ui_text(state.language).failed_to_start
-                    );
-                    return Task::none();
-                }
-            };
-            if !config.has_enabled_exchange() {
-                let t = ui_text(state.language);
-                state.status = format!("{}: {}", t.failed_to_start, t.configure_exchange);
-                return Task::none();
-            }
-            state.running = true;
-            state.status = ui_text(state.language).running_status.to_string();
-            let task = Task::perform(engine::run(config), |result| {
-                Message::EngineFinished(result.map_err(|error| format!("{error:#}")))
-            });
-            let (task, handle) = task.abortable();
-            state.run_handle = Some(handle);
-            return task;
+        };
+
+        if !config.has_enabled_exchange() {
+            self.status = format!("{}: {}", t.failed_to_start, t.configure_exchange);
+            return;
         }
-        Message::Stop => {
-            if let Some(handle) = state.run_handle.take() {
-                handle.abort();
-            }
-            state.running = false;
-            state.status = ui_text(state.language).stopped.to_string();
+
+        let Some(runtime) = self.runtime.as_ref() else {
+            self.status = format!("{}: Tokio runtime is unavailable", t.failed_to_start);
+            return;
+        };
+
+        let (tx, rx) = mpsc::channel();
+        let repaint = ctx.clone();
+        let handle = runtime.spawn(async move {
+            let result = engine::run(config)
+                .await
+                .map_err(|error| format!("{error:#}"));
+            let _ = tx.send(result);
+            repaint.request_repaint();
+        });
+
+        self.running = true;
+        self.status = t.running_status.to_string();
+        self.engine_rx = Some(rx);
+        self.run_handle = Some(handle);
+    }
+
+    fn stop_clicked(&mut self) {
+        if let Some(handle) = self.run_handle.take() {
+            handle.abort();
         }
-        Message::EngineFinished(result) => {
-            state.run_handle = None;
-            state.running = false;
-            let t = ui_text(state.language);
-            state.status = match result {
+        self.engine_rx = None;
+        self.running = false;
+        self.status = ui_text(self.language).stopped.to_string();
+    }
+
+    fn poll_engine_result(&mut self) {
+        let received = match self.engine_rx.as_ref() {
+            Some(rx) => match rx.try_recv() {
+                Ok(result) => Some(result),
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => Some(Err(
+                    "engine task ended without returning a result".to_string(),
+                )),
+            },
+            None => None,
+        };
+
+        if let Some(result) = received {
+            self.engine_rx = None;
+            self.run_handle = None;
+            self.running = false;
+            let t = ui_text(self.language);
+            self.status = match result {
                 Ok(()) => t.engine_stopped.to_string(),
                 Err(error) => format!("{}: {error}", t.engine_error),
             };
         }
     }
-    Task::none()
-}
 
-fn view(state: &State) -> Element<'_, Message> {
-    let t = ui_text(state.language);
-    let status_text = if state.running {
-        t.running_badge
-    } else {
-        t.stopped_badge
-    };
+    fn header(&mut self, ui: &mut egui::Ui) {
+        let t = ui_text(self.language);
+        let running = self.running;
+        let mut save = false;
+        let mut start = false;
+        let mut stop = false;
 
-    let start = if state.running {
-        button(text(t.start).size(BODY_SIZE))
-            .padding(BUTTON_PADDING)
-            .style(button::success)
-    } else {
-        button(text(t.start).size(BODY_SIZE))
-            .padding(BUTTON_PADDING)
-            .style(button::success)
-            .on_press(Message::Start)
-    };
-    let stop = if state.running {
-        button(text(t.stop).size(BODY_SIZE))
-            .padding(BUTTON_PADDING)
-            .style(button::danger)
-            .on_press(Message::Stop)
-    } else {
-        button(text(t.stop).size(BODY_SIZE))
-            .padding(BUTTON_PADDING)
-            .style(button::danger)
-    };
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new("Limit Canceller 0.3.4 · egui").size(20.0).strong());
+                ui.label(
+                    egui::RichText::new(format!("{}: {}", t.config_label, self.config_path))
+                        .size(10.0)
+                        .weak(),
+                );
+            });
 
-    let header = row![
-        column![
-            text("Limit Canceller 0.3.3").size(TITLE_SIZE),
-            text(format!("{}: {}", t.config_label, state.config_path)).size(SMALL_SIZE),
-        ]
-        .spacing(2).width(Fill),
-        text(status_text).size(BODY_SIZE),
-        button(text(t.save).size(BODY_SIZE))
-            .padding(BUTTON_PADDING)
-            .style(button::primary)
-            .on_press(Message::Save),
-        start,
-        stop,
-        container("").width(Length::Fixed(5.0)),
-    ]
-    .spacing(7)
-    .align_y(iced::alignment::Vertical::Center)
-    .width(Fill);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                stop = ui
+                    .add_enabled(
+                        running,
+                        egui::Button::new(t.stop).fill(STOP_BUTTON).min_size(egui::vec2(58.0, 26.0)),
+                    )
+                    .clicked();
+                start = ui
+                    .add_enabled(
+                        !running,
+                        egui::Button::new(t.start).fill(START_BUTTON).min_size(egui::vec2(58.0, 26.0)),
+                    )
+                    .clicked();
+                save = ui
+                    .add(egui::Button::new(t.save).fill(SAVE_BUTTON).min_size(egui::vec2(66.0, 26.0)))
+                    .clicked();
 
-    let settings = container(
-        row![
-            text(t.polling).size(BODY_SIZE).width(Length::Fixed(78.0)),
-            text_input("100", &state.poll_milliseconds)
-                .on_input(Message::PollChanged)
-                .size(BODY_SIZE)
-                .padding(FIELD_PADDING)
-                .width(Length::Fixed(92.0)),
-            text(t.language).size(BODY_SIZE),
-            pick_list(LANGUAGES, Some(state.language), Message::LanguageChanged)
-                .text_size(BODY_SIZE)
-                .padding(FIELD_PADDING)
-                .width(Length::Fixed(100.0)),
-            text(t.changes_running).size(SMALL_SIZE),
-        ]
-        .spacing(8)
-        .align_y(iced::alignment::Vertical::Center),
-    )
-    .padding(8)
-    .width(Fill)
-    .style(container::rounded_box);
+                let badge = if running {
+                    egui::RichText::new(t.running_badge)
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(95, 205, 135))
+                } else {
+                    egui::RichText::new(t.stopped_badge)
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(170, 175, 185))
+                };
+                ui.label(badge);
+            });
+        });
 
-    // Keep the static header/settings outside the scrolling clip layer.
-    // With iced 0.14 + tiny-skia this substantially reduces redraw work while
-    // the wheel is moving because fewer text runs are processed by clipping.
-    let body = column![
-        exchange_card(state, ExchangeId::Binance),
-        exchange_card(state, ExchangeId::Okx),
-        exchange_card(state, ExchangeId::Bybit),
-        container(text(&state.status).size(SMALL_SIZE))
-            .padding(8)
-            .width(Fill)
-            .style(container::bordered_box),
-    ]
-    .spacing(8)
-    .width(Fill);
-
-    column![header, settings, scrollable(body).height(Fill)]
-        .spacing(8)
-        .padding(10)
-        .width(Fill)
-        .height(Fill)
-        .into()
-}
-
-fn exchange_card(state: &State, exchange: ExchangeId) -> Element<'_, Message> {
-    let t = ui_text(state.language);
-    let form = state.exchange(exchange);
-    let enabled = !form.api_key.trim().is_empty() && !form.api_secret.trim().is_empty();
-    let state_label = if enabled {
-        t.enabled
-    } else {
-        t.disabled_empty_keys
-    };
-
-    let mut symbols: Column<'_, Message> = Column::new().spacing(5).width(Fill);
-    if form.symbols.is_empty() {
-        symbols = symbols.push(text(t.no_tickers).size(SMALL_SIZE));
-    } else {
-        for (index, item) in form.symbols.iter().enumerate() {
-            let next_market = item.market.toggled(exchange);
-            let market = button(text(item.market.as_str()).size(BODY_SIZE))
-                .padding(BUTTON_PADDING)
-                .style(button::background)
-                .width(Length::Fixed(112.0))
-                .on_press(Message::MarketChanged(exchange, index, next_market));
-            let symbol_input = text_input("BTC/USDT", &item.symbol)
-                .on_input(move |value| Message::SymbolChanged(exchange, index, value))
-                .size(BODY_SIZE)
-                .padding(FIELD_PADDING)
-                .width(Length::FillPortion(5));
-            let side = pick_list(
-                SideChoice::options(state.language),
-                Some(SideChoice::from_cancel_side(item.side, state.language)),
-                move |value| Message::SideChanged(exchange, index, value.cancel_side()),
-            )
-            .text_size(BODY_SIZE)
-            .padding(FIELD_PADDING)
-            .width(Length::FillPortion(2));
-            let remove = button(text(t.remove).size(BODY_SIZE))
-                .padding(BUTTON_PADDING)
-                .style(button::danger)
-                .on_press(Message::RemoveSymbol(exchange, index));
-            symbols = symbols.push(
-                row![market, symbol_input, side, remove]
-                    .spacing(6)
-                    .align_y(iced::alignment::Vertical::Center)
-                    .width(Fill),
-            );
+        if save {
+            self.save_clicked();
+        }
+        if start {
+            self.start_clicked(ui.ctx());
+        }
+        if stop {
+            self.stop_clicked();
         }
     }
 
-    let key_input = text_input(t.api_key, &form.api_key)
-        .on_input(move |value| Message::ApiKeyChanged(exchange, value))
-        .size(BODY_SIZE)
-        .padding(FIELD_PADDING)
-        .width(Length::FillPortion(1));
-    let secret_input = text_input(t.api_secret, &form.api_secret)
-        .secure(true)
-        .on_input(move |value| Message::ApiSecretChanged(exchange, value))
-        .size(BODY_SIZE)
-        .padding(FIELD_PADDING)
-        .width(Length::FillPortion(1));
+    fn settings(&mut self, ui: &mut egui::Ui) {
+        let t = ui_text(self.language);
+        let previous_language = self.language;
 
-    let mut credentials: Row<'_, Message> = row![key_input, secret_input].spacing(6).width(Fill);
-    if exchange == ExchangeId::Okx {
-        credentials = credentials.push(
-            text_input(t.passphrase, &form.passphrase)
-                .secure(true)
-                .on_input(Message::PassphraseChanged)
-                .size(BODY_SIZE)
-                .padding(FIELD_PADDING)
-                .width(Length::FillPortion(1)),
-        );
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(t.polling).size(11.0));
+                ui.add_sized(
+                    [92.0, ROW_HEIGHT],
+                    egui::TextEdit::singleline(&mut self.poll_milliseconds).hint_text("100"),
+                );
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(t.language).size(11.0));
+                egui::ComboBox::from_id_salt("ui-language")
+                    .selected_text(self.language.label())
+                    .width(100.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.language, Language::English, "English");
+                        ui.selectable_value(&mut self.language, Language::Russian, "Русский");
+                    });
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(t.changes_running).size(10.0).weak());
+            });
+        });
+
+        if self.language != previous_language {
+            self.status = if self.running {
+                ui_text(self.language).running_status.to_string()
+            } else {
+                ui_text(self.language).ready.to_string()
+            };
+        }
     }
 
-    let top = row![
-        column![
-            text(exchange.title()).size(EXCHANGE_TITLE_SIZE),
-            text(state_label).size(SMALL_SIZE),
-        ]
-        .spacing(1)
-        .width(Fill),
-        button(text(t.clear_keys).size(BODY_SIZE))
-            .padding(BUTTON_PADDING)
-            .style(button::danger)
-            .on_press(Message::ClearCredentials(exchange)),
-    ]
-    .spacing(7)
-    .align_y(iced::alignment::Vertical::Center)
-    .width(Fill);
+    fn exchange_card(&mut self, ui: &mut egui::Ui, exchange: ExchangeId) {
+        let language = self.language;
+        let t = ui_text(language);
+        let mut credentials_cleared = false;
 
-    container(
-        column![
-            top,
-            credentials,
-            text(t.tickers_market_cancel_side).size(BODY_SIZE),
-            symbols,
-            button(text(t.add_ticker).size(BODY_SIZE))
-                .padding(BUTTON_PADDING)
-                .style(button::secondary)
-                .on_press(Message::AddSymbol(exchange)),
-        ]
-        .spacing(6)
-        .width(Fill),
+        {
+            let form = self.exchange_mut(exchange);
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+
+                let enabled = !form.api_key.trim().is_empty() && !form.api_secret.trim().is_empty();
+                let state_label = if enabled {
+                    t.enabled
+                } else {
+                    t.disabled_empty_keys
+                };
+
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new(exchange.title()).size(16.0).strong());
+                        ui.label(egui::RichText::new(state_label).size(10.0).weak());
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(t.clear_keys)
+                                    .fill(REMOVE_BUTTON)
+                                    .min_size(egui::vec2(88.0, 25.0)),
+                            )
+                            .clicked()
+                        {
+                            form.api_key.clear();
+                            form.api_secret.clear();
+                            form.passphrase.clear();
+                            credentials_cleared = true;
+                        }
+                    });
+                });
+
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let fields = if exchange == ExchangeId::Okx { 3.0 } else { 2.0 };
+                    let spacing = ui.spacing().item_spacing.x;
+                    let width = ((ui.available_width() - spacing * (fields - 1.0)) / fields).max(120.0);
+
+                    ui.add_sized(
+                        [width, ROW_HEIGHT],
+                        egui::TextEdit::singleline(&mut form.api_key).hint_text(t.api_key),
+                    );
+                    ui.add_sized(
+                        [width, ROW_HEIGHT],
+                        egui::TextEdit::singleline(&mut form.api_secret)
+                            .password(true)
+                            .hint_text(t.api_secret),
+                    );
+                    if exchange == ExchangeId::Okx {
+                        ui.add_sized(
+                            [width, ROW_HEIGHT],
+                            egui::TextEdit::singleline(&mut form.passphrase)
+                                .password(true)
+                                .hint_text(t.passphrase),
+                        );
+                    }
+                });
+
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(t.tickers_market_cancel_side).size(11.0));
+
+                if form.symbols.is_empty() {
+                    ui.label(egui::RichText::new(t.no_tickers).size(10.0).weak());
+                } else {
+                    let mut remove_index = None;
+                    for (index, item) in form.symbols.iter_mut().enumerate() {
+                        ui.push_id((exchange, index), |ui| {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .add_sized(
+                                        [MARKET_WIDTH, ROW_HEIGHT],
+                                        egui::Button::new(item.market.as_str()).fill(MARKET_BUTTON),
+                                    )
+                                    .clicked()
+                                {
+                                    item.market = item.market.toggled(exchange);
+                                }
+
+                                let symbol_width = (ui.available_width()
+                                    - SIDE_WIDTH
+                                    - REMOVE_WIDTH
+                                    - ui.spacing().item_spacing.x * 2.0)
+                                    .max(120.0);
+                                ui.add_sized(
+                                    [symbol_width, ROW_HEIGHT],
+                                    egui::TextEdit::singleline(&mut item.symbol)
+                                        .hint_text("BTC/USDT"),
+                                );
+
+                                egui::ComboBox::from_id_salt("side")
+                                    .selected_text(side_label(item.side, language))
+                                    .width(SIDE_WIDTH)
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut item.side,
+                                            CancelSide::Buy,
+                                            side_label(CancelSide::Buy, language),
+                                        );
+                                        ui.selectable_value(
+                                            &mut item.side,
+                                            CancelSide::Sell,
+                                            side_label(CancelSide::Sell, language),
+                                        );
+                                        ui.selectable_value(
+                                            &mut item.side,
+                                            CancelSide::Both,
+                                            side_label(CancelSide::Both, language),
+                                        );
+                                    });
+
+                                if ui
+                                    .add_sized(
+                                        [REMOVE_WIDTH, ROW_HEIGHT],
+                                        egui::Button::new(t.remove).fill(REMOVE_BUTTON),
+                                    )
+                                    .clicked()
+                                {
+                                    remove_index = Some(index);
+                                }
+                            });
+                        });
+                    }
+
+                    if let Some(index) = remove_index {
+                        form.symbols.remove(index);
+                    }
+                }
+
+                ui.add_space(4.0);
+                if ui
+                    .add(
+                        egui::Button::new(t.add_ticker)
+                            .fill(SECONDARY_BUTTON)
+                            .min_size(egui::vec2(104.0, 25.0)),
+                    )
+                    .clicked()
+                {
+                    form.symbols.push(SymbolForm {
+                        market: MarketChoice::futures_default(exchange),
+                        symbol: String::new(),
+                        side: CancelSide::Both,
+                    });
+                }
+            });
+        }
+
+        if credentials_cleared {
+            self.status = format!("{}: {}", exchange.title(), t.credentials_cleared);
+        }
+    }
+
+    fn status_box(&self, ui: &mut egui::Ui) {
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(egui::RichText::new(&self.status).size(10.0));
+        });
+    }
+}
+
+impl eframe::App for State {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll_engine_result();
+
+        egui::CentralPanel::default_margins().show(ui, |ui| {
+            self.header(ui);
+            ui.add_space(6.0);
+            self.settings(ui);
+            ui.add_space(6.0);
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .wheel_scroll_multiplier(egui::vec2(1.0, 2.5))
+                .show(ui, |ui| {
+                    self.exchange_card(ui, ExchangeId::Binance);
+                    ui.add_space(6.0);
+                    self.exchange_card(ui, ExchangeId::Okx);
+                    ui.add_space(6.0);
+                    self.exchange_card(ui, ExchangeId::Bybit);
+                    ui.add_space(6.0);
+                    self.status_box(ui);
+                });
+        });
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(handle) = self.run_handle.take() {
+            handle.abort();
+        }
+        self.engine_rx = None;
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
+    }
+}
+
+fn side_label(side: CancelSide, language: Language) -> &'static str {
+    match (language, side) {
+        (Language::English, CancelSide::Buy) => "buy",
+        (Language::English, CancelSide::Sell) => "sell",
+        (Language::English, CancelSide::Both) => "both",
+        (Language::Russian, CancelSide::Buy) => "покупка",
+        (Language::Russian, CancelSide::Sell) => "продажа",
+        (Language::Russian, CancelSide::Both) => "обе стороны",
+    }
+}
+
+fn configure_egui(ctx: &egui::Context) {
+
+    ctx.set_theme(egui::Theme::Dark);
+
+    ctx.global_style_mut(|style| {
+        style.animation_time = 0.0;
+        style.spacing.item_spacing = egui::vec2(6.0, 5.0);
+        style.spacing.button_padding = egui::vec2(8.0, 4.0);
+
+        style.interaction.selectable_labels = false;
+        style.interaction.multi_widget_text_select = false;
+    });
+}
+
+fn app_icon() -> egui::IconData {
+    egui::IconData {
+        rgba: include_bytes!("../assets/app.rgba").to_vec(),
+        width: 64,
+        height: 64,
+    }
+}
+
+pub fn run() -> eframe::Result {
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("Limit Canceller 0.3.4 · egui experimental")
+            .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
+            .with_min_inner_size([WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT])
+            .with_icon(app_icon()),
+        renderer: eframe::Renderer::Glow,
+        centered: true,
+        multisampling: 0,
+        depth_buffer: 0,
+        stencil_buffer: 0,
+        dithering: false,
+        ..eframe::NativeOptions::default()
+    };
+
+    eframe::run_native(
+        "Limit Canceller 0.3.3 egui experimental",
+        native_options,
+        Box::new(|cc| Ok(Box::new(State::boot(cc)))),
     )
-    .padding(10)
-    .width(Fill)
-    .style(container::rounded_box)
-    .into()
 }

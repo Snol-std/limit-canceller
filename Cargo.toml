@@ -1,6 +1,6 @@
 [package]
 name = "limit-canceller"
-version = "0.3.3"
+version = "0.3.4-egui.1"
 edition = "2024"
 description = "Automatic cancellation of active limit orders on Binance, OKX, and Bybit"
 
@@ -8,9 +8,9 @@ description = "Automatic cancellation of active limit orders on Binance, OKX, an
 anyhow = "1.0.104"
 base64 = "0.23.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
-hex = "0.4.3"
-iced = { version = "0.14.0", default-features = false, features = ["tokio", "tiny-skia", "crisp"] }
+eframe = { version = "=0.36.2", default-features = false, features = ["glow", "default_fonts"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+hex = "0.4.3"
 hmac = "0.13.0"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1.0.229", features = ["derive"] }
