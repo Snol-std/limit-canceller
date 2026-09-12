@@ -1,0 +1,28 @@
+[package]
+name = "limit-canceller"
+version = "0.2.5"
+edition = "2024"
+description = "Автоматическое снятие активных лимитных ордеров: Binance, OKX, Bybit"
+
+[dependencies]
+anyhow = "1.0.104"
+base64 = "0.23.1"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+hex = "0.4.3"
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+hmac = "0.13.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
+toml = "1.1.6"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["test-util", "net", "io-util"] }
+
+[profile.release]
+lto = "thin"
+strip = true

@@ -1,0 +1,56 @@
+# Limit Canceller
+
+Limit Canceller is a lightweight Rust application for automatically monitoring and cancelling open orders on Binance, OKX, and Bybit. It supports exchange-specific markets, independent ticker lists, per-ticker cancellation rules (`buy`, `sell`, or `both`), millisecond polling and API rate-limit handling.
+
+## GitHub repository:
+
+https://github.com/Snol-std/limit-canceller
+
+## Release Notes
+
+### v0.1.0
+- Initial release.
+- Added the first console-based order cancellation workflow.
+- Added initial support for Binance, OKX, and Bybit.
+
+### v0.1.1
+- Maintenance release focused on stability of the initial implementation.
+- Improved request error handling and logging around exchange operations.
+- Improved configuration validation and general runtime reliability.
+
+### v0.2.0
+- Reworked the cancellation engine for faster and more reliable order removal.
+- Added mass cancellation for Binance and Bybit and batch cancellation for OKX, with up to 20 orders per OKX batch.
+- Added `poll_milliseconds` for sub-second polling intervals.
+- Improved exchange request signing, pagination, API response validation, rate-limit handling, and cooldown behavior.
+- Prevented missed polling ticks from accumulating when a previous cycle takes longer than the configured interval.
+
+### v0.2.1
+- Changed Bybit cancellation from cancel-all to individual order cancellation by `orderId`.
+- Added concurrent Bybit order cancellation while keeping Binance and OKX on their optimized bulk/batch cancellation paths.
+- Added shared Bybit request throttling to stay within cancellation API limits.
+- Refined the asynchronous per-symbol cancellation workflow.
+
+### v0.2.2
+- Fixed the Bybit async lifetime / `FnOnce is not general enough` compilation error.
+- Empty `api_key` or `api_secret` values now disable only the affected exchange instead of stopping the whole application.
+- Moved ticker configuration from one global symbol list to separate `symbols` lists for Binance, OKX, and Bybit.
+- Improved startup validation so enabled and disabled exchanges are handled independently.
+
+### v0.2.3
+- Added automatic Binance server-time synchronization for signed requests.
+- Added clock-offset compensation to prevent Binance error `-1021` (`Timestamp for this request is outside of the recvWindow`).
+- Added automatic time resynchronization and immediate retry when Binance returns `-1021`.
+- Kept the synchronized Binance time offset shared across all Binance ticker workers.
+
+### v0.2.4
+- Added cancellation-side selection for each exchange: `buy`, `sell`, or `both`.
+- Binance now uses fast cancel-all requests for `both` and individual `orderId` cancellation when only `buy` or `sell` should be removed.
+- OKX and Bybit now filter open orders by side before sending cancellation requests.
+- Disabled ANSI terminal colors so logs display correctly in Windows `cmd.exe`.
+
+### v0.2.5
+- Added independent cancellation-side settings for every ticker on every exchange.
+- A single exchange can now use different rules for different symbols, for example `BTC/USDT = sell` and `ETH/USDT = both`.
+- Kept backward compatibility with the older string-only `symbols` format by using the exchange-level `side` value as a fallback.
+- Added duplicate-symbol validation to prevent multiple workers from managing the same ticker on the same exchange.

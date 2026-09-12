@@ -1,0 +1,43 @@
+# Copy this file to config.toml and fill in the required sections.
+poll_milliseconds = 250
+
+# side: buy | sell | both
+# The cancellation side is configured independently for each ticker.
+# The exchange-level side field is a fallback for the legacy string-only format
+# or for a ticker object without its own side value.
+
+[binance]
+api_key = ""
+api_secret = ""
+market = "futures"
+side = "both"
+symbols = [
+  { symbol = "BTC/USDT", side = "sell" },
+  { symbol = "ETH/USDT", side = "both" },
+  { symbol = "LA/USDT",  side = "buy" }
+]
+
+[okx]
+api_key = ""
+api_secret = ""
+passphrase = ""
+market = "swap"
+side = "both"
+symbols = [
+  { symbol = "BTC/USDT", side = "buy" },
+  { symbol = "ETH/USDT", side = "sell" }
+]
+
+[bybit]
+api_key = ""
+api_secret = ""
+market = "linear"
+side = "both"
+symbols = [
+  { symbol = "BTC/USDT", side = "both" },
+  { symbol = "ETH/USDT", side = "buy" }
+]
+
+# The legacy format is also supported:
+# symbols = ["BTC/USDT", "ETH/USDT"]
+# In this case both tickers use the exchange-level side value.
