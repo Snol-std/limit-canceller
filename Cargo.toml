@@ -1,14 +1,15 @@
 [package]
 name = "limit-canceller"
-version = "0.2.5"
+version = "0.3.0"
 edition = "2024"
-description = "Автоматическое снятие активных лимитных ордеров: Binance, OKX, Bybit"
+description = "Automatic cancellation of active limit orders on Binance, OKX, and Bybit"
 
 [dependencies]
 anyhow = "1.0.104"
 base64 = "0.23.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 hex = "0.4.3"
+iced = { version = "0.14.0", features = ["tokio"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 hmac = "0.13.0"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }

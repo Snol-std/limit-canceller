@@ -62,6 +62,12 @@ impl CancelSide {
     }
 }
 
+impl std::fmt::Display for CancelSide {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Regular active (open) order. Order type is not filtered.
 ///
 /// Price and quantity are stored as strings because exchanges return them as strings,
