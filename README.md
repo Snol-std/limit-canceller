@@ -2,8 +2,6 @@
 
 Limit Canceller is a lightweight Rust application for automatically monitoring and cancelling open orders on Binance, OKX, and Bybit. It supports exchange-specific markets, independent ticker lists, per-ticker cancellation rules (`buy`, `sell`, or `both`), millisecond polling, API rate-limit handling, and a compact Windows GUI for managing configuration and controlling the cancellation engine. The GUI is English by default and can be switched to Russian from the application settings.
 
-**This archive is an experimental eframe/egui frontend.** The exchange engine, configuration format, symbol normalization, API signing, polling, and cancellation logic are unchanged. The `iced` GUI dependency has been removed completely. The native frontend uses `eframe 0.36.2` with the `glow` OpenGL renderer only; `wgpu` is not included.
-
 ## GitHub repository:
 
 https://github.com/Snol-std/limit-canceller
@@ -107,3 +105,12 @@ https://github.com/Snol-std/limit-canceller
 - Uses one Tokio worker thread for the network engine. The egui thread stays event-driven and the engine requests a repaint only when it finishes.
 - Disables egui hover/fade animations and GPU multisampling for a lower-overhead baseline.
 - Keeps the Windows GUI subsystem and existing application icon.
+
+
+### v0.3.4
+- Added native Windows DWM setup during application creation so the title bar is dark before the first visible frame instead of initially appearing white and fixing itself only after focus changes.
+- Forces an immediate non-client frame refresh with `SWP_FRAMECHANGED` after applying DWM attributes.
+- Explicitly sets Windows 11 caption, border, and caption-text colors to match the application palette; older Windows versions fall back to immersive dark-title-bar mode.
+- Reworked the egui palette to a muted iced-like dark theme with dark panels/inputs, softer borders, a restrained blue accent, green Start, and muted red Stop/Remove actions.
+- Disabled selectable text for ordinary egui labels. Text fields remain editable/selectable.
+- Increased mouse-wheel scrolling to `2.5x` and disabled programmatic scroll animation.

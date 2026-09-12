@@ -22,12 +22,22 @@ const MARKET_WIDTH: f32 = 88.0;
 const SIDE_WIDTH: f32 = 112.0;
 const REMOVE_WIDTH: f32 = 72.0;
 
-const MARKET_BUTTON: egui::Color32 = egui::Color32::from_rgb(54, 82, 138);
-const SAVE_BUTTON: egui::Color32 = egui::Color32::from_rgb(46, 82, 140);
-const START_BUTTON: egui::Color32 = egui::Color32::from_rgb(38, 112, 75);
-const STOP_BUTTON: egui::Color32 = egui::Color32::from_rgb(145, 52, 58);
-const REMOVE_BUTTON: egui::Color32 = egui::Color32::from_rgb(125, 47, 52);
-const SECONDARY_BUTTON: egui::Color32 = egui::Color32::from_rgb(62, 68, 78);
+// Muted dark palette close to the previous iced build.
+const APP_BG: egui::Color32 = egui::Color32::from_rgb(24, 26, 31);
+const PANEL_BG: egui::Color32 = egui::Color32::from_rgb(31, 34, 40);
+const INPUT_BG: egui::Color32 = egui::Color32::from_rgb(37, 40, 48);
+const BORDER: egui::Color32 = egui::Color32::from_rgb(55, 61, 72);
+const TEXT: egui::Color32 = egui::Color32::from_rgb(225, 229, 236);
+const TEXT_WEAK: egui::Color32 = egui::Color32::from_rgb(145, 152, 164);
+const ACCENT: egui::Color32 = egui::Color32::from_rgb(73, 105, 174);
+const ACCENT_HOVER: egui::Color32 = egui::Color32::from_rgb(88, 123, 198);
+
+const MARKET_BUTTON: egui::Color32 = egui::Color32::from_rgb(61, 88, 146);
+const SAVE_BUTTON: egui::Color32 = egui::Color32::from_rgb(68, 99, 164);
+const START_BUTTON: egui::Color32 = egui::Color32::from_rgb(46, 122, 80);
+const STOP_BUTTON: egui::Color32 = egui::Color32::from_rgb(145, 61, 67);
+const REMOVE_BUTTON: egui::Color32 = egui::Color32::from_rgb(119, 52, 57);
+const SECONDARY_BUTTON: egui::Color32 = egui::Color32::from_rgb(48, 53, 63);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Language {
@@ -98,8 +108,8 @@ fn ui_text(language: Language) -> UiText {
         Language::English => UiText {
             ready: "Ready. Changes are saved to config.toml.",
             config_label: "Config",
-            running_badge: "● RUNNING",
-            stopped_badge: "● STOPPED",
+            running_badge: "· RUNNING",
+            stopped_badge: "· STOPPED",
             save: "Save",
             start: "Start",
             stop: "Stop",
@@ -131,8 +141,8 @@ fn ui_text(language: Language) -> UiText {
         Language::Russian => UiText {
             ready: "Готово. Изменения сохраняются в config.toml.",
             config_label: "Конфиг",
-            running_badge: "● РАБОТАЕТ",
-            stopped_badge: "● ОСТАНОВЛЕНО",
+            running_badge: "· РАБОТАЕТ",
+            stopped_badge: "· ОСТАНОВЛЕНО",
             save: "Сохранить",
             start: "Старт",
             stop: "Стоп",
@@ -343,6 +353,9 @@ struct State {
 
 impl State {
     fn boot(cc: &eframe::CreationContext<'_>) -> Self {
+        // The window exists but is still hidden while the app creator runs.
+        // Apply native DWM colors now so Windows never exposes a white title bar.
+        configure_native_title_bar(cc);
         configure_egui(&cc.egui_ctx);
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -359,7 +372,11 @@ impl State {
             Ok(config) => Self::from_config(config_path, config, runtime),
             Err(error) => {
                 let language = Language::English;
-                let mut state = Self::from_config(config_path, AppConfig::default(), runtime);
+                let mut state = Self::from_config(
+                    config_path,
+                    AppConfig::default(),
+                    runtime,
+                );
                 state.language = language;
                 state.status = format!("{}: {error:#}", ui_text(language).failed_load_config);
                 state
@@ -542,7 +559,7 @@ impl State {
 
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new("Limit Canceller 0.3.4 · egui").size(20.0).strong());
+                ui.label(egui::RichText::new("Limit Canceller 0.3.4").size(20.0).strong());
                 ui.label(
                     egui::RichText::new(format!("{}: {}", t.config_label, self.config_path))
                         .size(10.0)
@@ -574,7 +591,7 @@ impl State {
                 } else {
                     egui::RichText::new(t.stopped_badge)
                         .size(11.0)
-                        .color(egui::Color32::from_rgb(170, 175, 185))
+                        .color(TEXT_WEAK)
                 };
                 ui.label(badge);
             });
@@ -595,7 +612,7 @@ impl State {
         let t = ui_text(self.language);
         let previous_language = self.language;
 
-        egui::Frame::group(ui.style()).show(ui, |ui| {
+        egui::Frame::group(ui.style()).fill(PANEL_BG).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(t.polling).size(11.0));
@@ -633,7 +650,7 @@ impl State {
 
         {
             let form = self.exchange_mut(exchange);
-            egui::Frame::group(ui.style()).show(ui, |ui| {
+            egui::Frame::group(ui.style()).fill(PANEL_BG).show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
 
                 let enabled = !form.api_key.trim().is_empty() && !form.api_secret.trim().is_empty();
@@ -785,7 +802,7 @@ impl State {
     }
 
     fn status_box(&self, ui: &mut egui::Ui) {
-        egui::Frame::group(ui.style()).show(ui, |ui| {
+        egui::Frame::group(ui.style()).fill(PANEL_BG).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.label(egui::RichText::new(&self.status).size(10.0));
         });
@@ -805,6 +822,7 @@ impl eframe::App for State {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .wheel_scroll_multiplier(egui::vec2(1.0, 2.5))
+                .animated(false)
                 .show(ui, |ui| {
                     self.exchange_card(ui, ExchangeId::Binance);
                     ui.add_space(6.0);
@@ -839,18 +857,131 @@ fn side_label(side: CancelSide, language: Language) -> &'static str {
     }
 }
 
-fn configure_egui(ctx: &egui::Context) {
 
+fn configure_egui(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
 
+    let mut visuals = egui::Visuals::dark();
+    visuals.override_text_color = Some(TEXT);
+    visuals.panel_fill = APP_BG;
+    visuals.window_fill = PANEL_BG;
+    visuals.extreme_bg_color = INPUT_BG;
+    visuals.faint_bg_color = egui::Color32::from_rgb(28, 31, 37);
+    visuals.selection.bg_fill = ACCENT;
+    visuals.selection.stroke = egui::Stroke::new(1.0, TEXT);
+
+    visuals.widgets.noninteractive.bg_fill = PANEL_BG;
+    visuals.widgets.noninteractive.weak_bg_fill = PANEL_BG;
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, BORDER);
+    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, TEXT);
+
+    visuals.widgets.inactive.bg_fill = INPUT_BG;
+    visuals.widgets.inactive.weak_bg_fill = SECONDARY_BUTTON;
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, BORDER);
+    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, TEXT);
+
+    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(47, 52, 63);
+    visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(55, 62, 75);
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, ACCENT_HOVER);
+    visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, TEXT);
+
+    visuals.widgets.active.bg_fill = egui::Color32::from_rgb(53, 60, 74);
+    visuals.widgets.active.weak_bg_fill = ACCENT;
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, ACCENT_HOVER);
+    visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, TEXT);
+
+    visuals.widgets.open.bg_fill = egui::Color32::from_rgb(43, 48, 58);
+    visuals.widgets.open.weak_bg_fill = egui::Color32::from_rgb(52, 59, 72);
+    visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, ACCENT_HOVER);
+    visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, TEXT);
+
+    ctx.set_visuals(visuals);
     ctx.global_style_mut(|style| {
+        // Static desktop UI: no hover/fade animations and no label text selection.
         style.animation_time = 0.0;
         style.spacing.item_spacing = egui::vec2(6.0, 5.0);
         style.spacing.button_padding = egui::vec2(8.0, 4.0);
-
         style.interaction.selectable_labels = false;
         style.interaction.multi_widget_text_select = false;
     });
+}
+
+#[cfg(target_os = "windows")]
+fn configure_native_title_bar(cc: &eframe::CreationContext<'_>) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::Graphics::Dwm::{
+        DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+        DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+        SetWindowPos,
+    };
+
+    let Ok(window_handle) = cc.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(handle) = window_handle.as_raw() else {
+        return;
+    };
+    let hwnd = handle.hwnd.get() as HWND;
+
+    unsafe fn set_attr<T>(hwnd: HWND, attribute: u32, value: &T) -> i32 {
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                attribute,
+                (value as *const T).cast(),
+                std::mem::size_of::<T>() as u32,
+            )
+        }
+    }
+
+    const LEGACY_DARK_MODE_ATTRIBUTE: u32 = 19;
+    let enabled: i32 = 1;
+    let caption = colorref(APP_BG);
+    let border = colorref(BORDER);
+    let text = colorref(TEXT);
+
+    unsafe {
+        let result = set_attr(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+            &enabled,
+        );
+        if result < 0 {
+            let _ = set_attr(hwnd, LEGACY_DARK_MODE_ATTRIBUTE, &enabled);
+        }
+
+        // Windows 11 supports explicit caption/border/text colors. Older Windows
+        // versions simply reject these attributes, so failures are harmless.
+        let _ = set_attr(hwnd, DWMWA_CAPTION_COLOR as u32, &caption);
+        let _ = set_attr(hwnd, DWMWA_BORDER_COLOR as u32, &border);
+        let _ = set_attr(hwnd, DWMWA_TEXT_COLOR as u32, &text);
+
+        // DWM can cache the initial non-client frame. Force Windows to rebuild
+        // it immediately, instead of waiting for the first deactivate/activate
+        // cycle. This fixes the initial white caption and invisible caption buttons.
+        let _ = SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_native_title_bar(_cc: &eframe::CreationContext<'_>) {}
+
+#[cfg(target_os = "windows")]
+fn colorref(color: egui::Color32) -> u32 {
+    let [r, g, b, _] = color.to_array();
+    r as u32 | ((g as u32) << 8) | ((b as u32) << 16)
 }
 
 fn app_icon() -> egui::IconData {
@@ -864,7 +995,7 @@ fn app_icon() -> egui::IconData {
 pub fn run() -> eframe::Result {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Limit Canceller 0.3.4 · egui experimental")
+            .with_title("Limit Canceller 0.3.4")
             .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
             .with_min_inner_size([WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT])
             .with_icon(app_icon()),
@@ -878,7 +1009,7 @@ pub fn run() -> eframe::Result {
     };
 
     eframe::run_native(
-        "Limit Canceller 0.3.3 egui experimental",
+        "Limit Canceller 0.3.4",
         native_options,
         Box::new(|cc| Ok(Box::new(State::boot(cc)))),
     )

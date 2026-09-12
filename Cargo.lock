@@ -1463,7 +1463,7 @@ dependencies = [
 
 [[package]]
 name = "limit-canceller"
-version = "0.3.4-egui.1"
+version = "0.3.4"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -1472,6 +1472,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hmac",
+ "raw-window-handle",
  "reqwest",
  "serde",
  "serde_json",
@@ -1480,6 +1481,7 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
  "winres",
 ]
 

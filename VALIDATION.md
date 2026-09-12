@@ -1,34 +1,28 @@
-# Validation notes for v0.3.4-egui.1 experimental
+# Validation notes for v0.3.4
 
-This environment does not contain Rust/Cargo, so a real `cargo check` or Windows release build could not be executed here.
+This environment does not contain Rust/Cargo or a Windows runtime, so a real `cargo check`, Windows release build, and Task Manager memory measurement could not be executed here.
 
 Static checks performed:
 
-- `iced` was removed from `Cargo.toml`.
-- No `wgpu` dependency is present in this experimental build.
-- `eframe = 0.36.2` is pinned with `default-features = false` and only `glow` plus `default_fonts` enabled.
-- The native renderer is explicitly set to `eframe::Renderer::Glow`.
-- MSAA, depth buffer, stencil buffer, and dithering are disabled.
-- egui animation time is set to zero to avoid animation-driven redraws.
-- A single-worker Tokio runtime is retained for the asynchronous exchange engine.
-- The engine completion task calls `egui::Context::request_repaint()` only when the engine exits, so no GUI polling timer is needed.
-- Save / Start / Stop behavior is preserved.
-- API secret and OKX passphrase inputs remain password-masked.
-- English and Russian UI translations are preserved.
-- Market and side remain configured per ticker.
-- New tickers default to Binance futures, OKX swap, and Bybit linear.
-- Symbol normalization and USDT/USDC support remain in the existing backend/config code.
-- The compact inline `symbols = [{ market = ..., symbol = ..., side = ... }]` TOML format is unchanged.
-- The application icon and release Windows GUI subsystem are retained.
-- The stale iced-based `Cargo.lock` was intentionally removed; the first Cargo build will generate a fresh lockfile for the egui dependency graph.
+- Package version remains `0.3.4`.
+- `iced`, `iced_tiny_skia`, Slint, and `wgpu` are absent from `Cargo.toml`.
+- `eframe = 0.36.2` is restored with `default-features = false` and only `glow` plus `default_fonts` enabled.
+- The original eager single-worker Tokio runtime and normal tracing subscriber behavior from `0.3.4-egui.1` are restored.
+- The failed memory-focused experiment from the earlier `0.3.4` draft is removed.
+- Windows title-bar DWM attributes are still applied from `CreationContext` before the first visible frame.
+- `SetWindowPos(... SWP_FRAMECHANGED ...)` is still used immediately after the DWM changes, preserving the confirmed title-bar fix.
+- Dark caption, border, and caption-text colors remain enabled on supported Windows versions.
+- The iced-like dark egui palette is preserved.
+- Ordinary egui label selection remains disabled; text fields remain selectable/editable.
+- Mouse-wheel multiplier remains `2.5x`; scroll animation remains disabled.
+- Glow/OpenGL remains the only eframe renderer in this build.
 
 Recommended Windows verification:
 
 ```powershell
+cargo clean
 cargo check
 cargo test
 cargo build --release
 .\target\release\limit-canceller.exe
 ```
-
-For the performance comparison, record idle RAM/CPU, CPU while moving the mouse over the window, and CPU while scrolling the exchange list.

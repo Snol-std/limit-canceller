@@ -1,6 +1,6 @@
 [package]
 name = "limit-canceller"
-version = "0.3.4-egui.1"
+version = "0.3.4"
 edition = "2024"
 description = "Automatic cancellation of active limit orders on Binance, OKX, and Bybit"
 
@@ -20,6 +20,14 @@ tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal",
 toml = "1.1.6"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6.2"
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["test-util", "net", "io-util"] }
