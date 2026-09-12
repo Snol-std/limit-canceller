@@ -3,6 +3,7 @@
 use iced::task::Handle;
 use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input, Column, Row};
 use iced::{Element, Fill, Length, Task, Theme};
+use std::future::Future;
 
 use crate::config::{AppConfig, BinanceConfig, BybitConfig, OkxConfig, SymbolConfig};
 use crate::engine;
@@ -12,6 +13,18 @@ const SIDES: [CancelSide; 3] = [CancelSide::Buy, CancelSide::Sell, CancelSide::B
 const BINANCE_MARKETS: [MarketChoice; 2] = [MarketChoice::Spot, MarketChoice::Futures];
 const OKX_MARKETS: [MarketChoice; 2] = [MarketChoice::Spot, MarketChoice::Swap];
 const BYBIT_MARKETS: [MarketChoice; 2] = [MarketChoice::Spot, MarketChoice::Linear];
+
+const WINDOW_WIDTH: f32 = 820.0;
+const WINDOW_HEIGHT: f32 = 620.0;
+const WINDOW_MIN_WIDTH: f32 = 680.0;
+const WINDOW_MIN_HEIGHT: f32 = 480.0;
+
+const TITLE_SIZE: u32 = 20;
+const EXCHANGE_TITLE_SIZE: u32 = 16;
+const BODY_SIZE: u32 = 11;
+const SMALL_SIZE: u32 = 10;
+const FIELD_PADDING: [u16; 2] = [4, 6];
+const BUTTON_PADDING: [u16; 2] = [4, 8];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExchangeId {
@@ -281,12 +294,59 @@ impl State {
     }
 }
 
+/// Lightweight executor for the GUI and network engine.
+///
+/// The default Tokio executor in iced creates a multi-thread runtime with a number of
+/// worker threads based on available CPUs. This application only needs one worker because
+/// all significant work is asynchronous HTTP I/O and timers.
+struct SingleWorkerTokio(tokio::runtime::Runtime);
+
+impl iced::Executor for SingleWorkerTokio {
+    fn new() -> Result<Self, iced::futures::io::Error> {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .map(Self)
+    }
+
+    fn spawn(&self, future: impl Future<Output = ()> + Send + 'static) {
+        let _ = self.0.spawn(future);
+    }
+
+    fn enter<R>(&self, f: impl FnOnce() -> R) -> R {
+        let _guard = self.0.enter();
+        f()
+    }
+
+    fn block_on<T>(&self, future: impl Future<Output = T>) -> T {
+        self.0.block_on(future)
+    }
+}
+
 pub fn run() -> iced::Result {
     iced::application(State::boot, update, view)
-        .title("Limit Canceller")
+        .executor::<SingleWorkerTokio>()
+        .title("Limit Canceller 0.3.1")
         .theme(Theme::Dark)
-        .window_size(iced::Size::new(1080.0, 820.0))
+        .antialiasing(false)
+        .window(iced::window::Settings {
+            size: iced::Size::new(WINDOW_WIDTH, WINDOW_HEIGHT),
+            min_size: Some(iced::Size::new(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)),
+            position: iced::window::Position::Centered,
+            icon: Some(app_icon()),
+            ..iced::window::Settings::default()
+        })
         .run()
+}
+
+fn app_icon() -> iced::window::Icon {
+    iced::window::icon::from_rgba(
+        include_bytes!("../assets/app.rgba").to_vec(),
+        64,
+        64,
+    )
+    .expect("embedded application icon must be valid RGBA")
 }
 
 fn update(state: &mut State, message: Message) -> Task<Message> {
@@ -319,7 +379,7 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             form.api_key.clear();
             form.api_secret.clear();
             form.passphrase.clear();
-            state.status = format!("{} credentials cleared. Click Save to write the changes to disk.", exchange.title());
+            state.status = format!("{}: credentials cleared. Click Save to write the changes to disk.", exchange.title());
         }
         Message::Save => match state.save_config() {
             Ok(_) => {
@@ -377,36 +437,62 @@ fn view(state: &State) -> Element<'_, Message> {
     let status_text = if state.running { "● RUNNING" } else { "● STOPPED" };
 
     let start = if state.running {
-        button("Start").style(button::success)
+        button(text("Start").size(BODY_SIZE))
+            .padding(BUTTON_PADDING)
+            .style(button::success)
     } else {
-        button("Start").style(button::success).on_press(Message::Start)
+        button(text("Start").size(BODY_SIZE))
+            .padding(BUTTON_PADDING)
+            .style(button::success)
+            .on_press(Message::Start)
     };
     let stop = if state.running {
-        button("Stop").style(button::danger).on_press(Message::Stop)
+        button(text("Stop").size(BODY_SIZE))
+            .padding(BUTTON_PADDING)
+            .style(button::danger)
+            .on_press(Message::Stop)
     } else {
-        button("Stop").style(button::danger)
+        button(text("Stop").size(BODY_SIZE))
+            .padding(BUTTON_PADDING)
+            .style(button::danger)
     };
 
     let header = row![
         column![
-            text("Limit Canceller").size(28),
-            text(format!("Config: {}", state.config_path)).size(13),
-        ].spacing(4).width(Fill),
-        text(status_text).size(16),
-        button("Save").style(button::primary).on_press(Message::Save),
+            text("Limit Canceller 0.3.1").size(TITLE_SIZE),
+            text(format!("Config: {}", state.config_path)).size(SMALL_SIZE),
+        ]
+        .spacing(2)
+        .width(Fill),
+        text(status_text).size(BODY_SIZE),
+        button(text("Save").size(BODY_SIZE))
+            .padding(BUTTON_PADDING)
+            .style(button::primary)
+            .on_press(Message::Save),
         start,
         stop,
-    ].spacing(10).align_y(iced::alignment::Vertical::Center).width(Fill);
+    ]
+    .spacing(7)
+    .align_y(iced::alignment::Vertical::Center)
+    .width(Fill);
 
     let settings = container(
         row![
-            text("Polling interval, ms").width(Length::Fixed(180.0)),
+            text("Polling, ms").size(BODY_SIZE).width(Length::Fixed(78.0)),
             text_input("100", &state.poll_milliseconds)
                 .on_input(Message::PollChanged)
-                .width(Length::Fixed(160.0)),
-            text("Changes made while RUNNING are applied after restart.").size(13),
-        ].spacing(12).align_y(iced::alignment::Vertical::Center)
-    ).padding(14).width(Fill).style(container::rounded_box);
+                .size(BODY_SIZE)
+                .padding(FIELD_PADDING)
+                .width(Length::Fixed(92.0)),
+            text("Changes made while RUNNING are applied after restart.")
+                .size(SMALL_SIZE),
+        ]
+        .spacing(8)
+        .align_y(iced::alignment::Vertical::Center),
+    )
+    .padding(8)
+    .width(Fill)
+    .style(container::rounded_box);
 
     let content = column![
         header,
@@ -414,11 +500,14 @@ fn view(state: &State) -> Element<'_, Message> {
         exchange_card(state, ExchangeId::Binance),
         exchange_card(state, ExchangeId::Okx),
         exchange_card(state, ExchangeId::Bybit),
-        container(text(&state.status).size(14))
-            .padding(12)
+        container(text(&state.status).size(SMALL_SIZE))
+            .padding(8)
             .width(Fill)
             .style(container::bordered_box),
-    ].spacing(14).padding(18).width(Fill);
+    ]
+    .spacing(8)
+    .padding(10)
+    .width(Fill);
 
     scrollable(content).height(Fill).into()
 }
@@ -428,71 +517,104 @@ fn exchange_card(state: &State, exchange: ExchangeId) -> Element<'_, Message> {
     let enabled = !form.api_key.trim().is_empty() && !form.api_secret.trim().is_empty();
     let state_label = if enabled { "enabled" } else { "disabled (empty keys)" };
 
-    let mut symbols: Column<'_, Message> = Column::new().spacing(8).width(Fill);
+    let mut symbols: Column<'_, Message> = Column::new().spacing(5).width(Fill);
     if form.symbols.is_empty() {
-        symbols = symbols.push(text("No tickers configured. Add a ticker below.").size(13));
+        symbols = symbols.push(text("No tickers configured. Add a ticker below.").size(SMALL_SIZE));
     } else {
         for (index, item) in form.symbols.iter().enumerate() {
             let symbol_input = text_input("BTC/USDT", &item.symbol)
                 .on_input(move |value| Message::SymbolChanged(exchange, index, value))
+                .size(BODY_SIZE)
+                .padding(FIELD_PADDING)
                 .width(Length::FillPortion(5));
-            let side = pick_list(SIDES, Some(item.side), move |value| Message::SideChanged(exchange, index, value))
-                .width(Length::FillPortion(2));
-            let remove = button("Remove")
+            let side = pick_list(
+                SIDES,
+                Some(item.side),
+                move |value| Message::SideChanged(exchange, index, value),
+            )
+            .text_size(BODY_SIZE)
+            .padding(FIELD_PADDING)
+            .width(Length::FillPortion(2));
+            let remove = button(text("Remove").size(BODY_SIZE))
+                .padding(BUTTON_PADDING)
                 .style(button::danger)
                 .on_press(Message::RemoveSymbol(exchange, index));
             symbols = symbols.push(
                 row![symbol_input, side, remove]
-                    .spacing(10)
+                    .spacing(6)
                     .align_y(iced::alignment::Vertical::Center)
-                    .width(Fill)
+                    .width(Fill),
             );
         }
     }
 
     let key_input = text_input("API key", &form.api_key)
         .on_input(move |value| Message::ApiKeyChanged(exchange, value))
+        .size(BODY_SIZE)
+        .padding(FIELD_PADDING)
         .width(Length::FillPortion(1));
     let secret_input = text_input("API secret", &form.api_secret)
         .secure(true)
         .on_input(move |value| Message::ApiSecretChanged(exchange, value))
+        .size(BODY_SIZE)
+        .padding(FIELD_PADDING)
         .width(Length::FillPortion(1));
 
-    let mut credentials: Row<'_, Message> = row![key_input, secret_input].spacing(10).width(Fill);
+    let mut credentials: Row<'_, Message> = row![key_input, secret_input]
+        .spacing(6)
+        .width(Fill);
     if exchange == ExchangeId::Okx {
         credentials = credentials.push(
             text_input("Passphrase", &form.passphrase)
                 .secure(true)
                 .on_input(Message::PassphraseChanged)
-                .width(Length::FillPortion(1))
+                .size(BODY_SIZE)
+                .padding(FIELD_PADDING)
+                .width(Length::FillPortion(1)),
         );
     }
 
     let top = row![
         column![
-            text(exchange.title()).size(22),
-            text(state_label).size(12),
-        ].spacing(2).width(Fill),
-        text("Market"),
+            text(exchange.title()).size(EXCHANGE_TITLE_SIZE),
+            text(state_label).size(SMALL_SIZE),
+        ]
+        .spacing(1)
+        .width(Fill),
+        text("Market").size(BODY_SIZE),
         pick_list(
             MarketChoice::options(exchange),
             Some(form.market),
             move |value| Message::MarketChanged(exchange, value),
-        ).width(Length::Fixed(150.0)),
-        button("Clear API keys")
+        )
+        .text_size(BODY_SIZE)
+        .padding(FIELD_PADDING)
+        .width(Length::Fixed(112.0)),
+        button(text("Clear keys").size(BODY_SIZE))
+            .padding(BUTTON_PADDING)
             .style(button::danger)
             .on_press(Message::ClearCredentials(exchange)),
-    ].spacing(10).align_y(iced::alignment::Vertical::Center).width(Fill);
+    ]
+    .spacing(7)
+    .align_y(iced::alignment::Vertical::Center)
+    .width(Fill);
 
     container(
         column![
             top,
             credentials,
-            text("Tickers / cancel side").size(15),
+            text("Tickers / cancel side").size(BODY_SIZE),
             symbols,
-            button("+ Add ticker")
+            button(text("+ Add ticker").size(BODY_SIZE))
+                .padding(BUTTON_PADDING)
                 .style(button::secondary)
                 .on_press(Message::AddSymbol(exchange)),
-        ].spacing(10).width(Fill)
-    ).padding(16).width(Fill).style(container::rounded_box).into()
+        ]
+        .spacing(6)
+        .width(Fill),
+    )
+    .padding(10)
+    .width(Fill)
+    .style(container::rounded_box)
+    .into()
 }

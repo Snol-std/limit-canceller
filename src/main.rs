@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 //! Limit Canceller: iced GUI plus the open-order cancellation engine.
 mod config;
 mod engine;

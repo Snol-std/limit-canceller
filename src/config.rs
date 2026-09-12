@@ -3,7 +3,8 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-/// One ticker rule. Market, symbol, and cancellation side always belong to the ticker itself.
+/// One ticker entry. Both formats are supported for backward compatibility:
+/// `"BTC/USDT"` and `{ symbol = "BTC/USDT", side = "sell" }`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SymbolConfig {

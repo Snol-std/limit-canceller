@@ -61,3 +61,14 @@ https://github.com/Snol-std/limit-canceller
 - Added GUI controls to add and remove tickers and configure `buy`, `sell`, or `both` independently for each ticker.
 - Added **Save**, **Start**, and **Stop** controls for managing `config.toml` and the cancellation engine directly from the application.
 - API secret and OKX passphrase fields are masked in the interface.
+
+### v0.3.1
+- Redesigned the GUI to use a smaller window, smaller fonts, tighter spacing, and a more compact layout.
+- Added an application icon for the window, taskbar, and Windows executable.
+- Fixed Windows resource compilation by resolving the application icon through `CARGO_MANIFEST_DIR`.
+- Fixed `iced 0.14` text-size compilation errors by using supported pixel types.
+- Release builds now use the Windows GUI subsystem, so launching `limit-canceller.exe` does not open a console window.
+- Replaced the heavyweight `wgpu` GUI renderer with `tiny-skia` to significantly reduce memory and CPU usage.
+- Added a single-worker Tokio executor for the GUI and asynchronous network engine to reduce idle resource usage.
+- Disabled GUI antialiasing and unnecessary `iced` default features for a lighter build.
+- Added release-build optimizations including LTO, a single codegen unit, symbol stripping, and `panic = "abort"`.

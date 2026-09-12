@@ -1,4 +1,4 @@
-# Validation — 0.3.0 GUI
+# Validation Notes
 
 Statically verified:
 
@@ -18,8 +18,18 @@ Rust/Cargo is not installed in the validation environment, so `cargo check` and 
 
 ```powershell
 cargo check
-cargo test
+cargo test --locked
 cargo run --release
 ```
 
 Iced 0.14 specifies `rust-version = 1.88`; Rust 1.97.1 is compatible.
+
+Additional static checks for v0.3.1:
+
+- Window settings use 820×620, a 680×480 minimum size, and centered positioning.
+- The embedded RGBA icon is 64×64×4 = 16384 bytes.
+- The Windows `.ico` contains multiple sizes.
+- `build.rs` uses `winres` only under `cfg(windows)`.
+- The version in Cargo.toml and the GUI title is 0.3.1.
+- iced default features are disabled; the GUI uses the lightweight `tiny-skia` renderer instead of `wgpu`.
+- The custom Tokio executor uses a single worker thread to reduce idle resource usage.
