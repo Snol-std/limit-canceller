@@ -648,7 +648,7 @@ impl State {
 
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new("Limit Canceller 0.4.0").size(20.0).strong());
+                ui.label(egui::RichText::new("Limit Canceller 0.4.1").size(20.0).strong());
                 ui.label(
                     egui::RichText::new(format!("{}: {}", t.config_label, self.config_path))
                         .size(10.0)
@@ -1100,7 +1100,7 @@ fn app_icon() -> egui::IconData {
 pub fn run() -> eframe::Result {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Limit Canceller 0.4.0")
+            .with_title("Limit Canceller 0.4.1")
             .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
             .with_min_inner_size([WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT])
             .with_icon(app_icon()),
@@ -1114,7 +1114,7 @@ pub fn run() -> eframe::Result {
     };
 
     eframe::run_native(
-        "Limit Canceller 0.4.0",
+        "Limit Canceller 0.4.1",
         native_options,
         Box::new(|cc| Ok(Box::new(State::boot(cc)))),
     )

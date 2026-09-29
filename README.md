@@ -124,3 +124,12 @@ https://github.com/Snol-std/limit-canceller
 - `DELETE /trading/order` follows the official sample's JSON-body signing format. `code=200000` is treated as asynchronous request acceptance as documented; a missing `data.orderId` no longer creates a false failure/backoff.
 - TigerX REST timeout follows the official sample (5 seconds instead of 15 seconds), and accepted orders that remain open are retried after a short grace period.
 - Cancellation is continuous: every sweep re-fetches current open orders and cancels everything matching the configured side, including orders placed after the engine started.
+
+### v0.4.1
+- Removed the client-side TigerX `10 requests / 10 seconds` cancellation queue. The supplied OpenAPI documents that rate for `DELETE /trading/order`, but enforcing it locally caused visible partial bursts: for example, if 7 slots had already been consumed in the rolling window, only 3 new orders were dispatched immediately.
+- TigerX now uses optimistic concurrent cancellation: every matching order ID for the configured ticker/side is dispatched immediately. A 100-order grid can therefore produce 100 concurrent ticker-scoped DELETE requests instead of being intentionally stretched across ~100 seconds.
+- Server-side limits are still respected dynamically. If TigerX actually returns HTTP 429/418, the shared cooldown stops further TigerX requests; without a `Retry-After` header a TigerX 429 falls back to one documented 10-second window.
+- Removed the extra 300 ms TigerX open-order read gate. `/trading/orders` has no explicit rate limit in the supplied OpenAPI reference, so normal read pacing now follows `poll_milliseconds`; real server throttling still activates the shared cooldown.
+- Cancellation retries are asymmetric: failed requests become eligible again after 100 ms, while accepted asynchronous cancels get a 750 ms grace period before the same still-open order can be submitted again.
+- `/trading/cancelAll` is deliberately not used for ordinary ticker cancellation. In the supplied OpenAPI it accepts only `exchangeType`, not `sym`, so using it for one ticker could cancel unrelated TigerX orders on the same underlying Binance/OKX exchange.
+- The implementation stays selective by exact `orderId`, so Binance/OKX TigerX orders on other configured or unconfigured tickers are not intentionally touched.

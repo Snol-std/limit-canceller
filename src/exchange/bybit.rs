@@ -181,7 +181,7 @@ mod tests {
         let mut exchange = Bybit::new("key", "secret", BybitMarket::Linear).unwrap();
         exchange.base_url = server.url.clone(); exchange.client = client();
         let orders = exchange.fetch_open_orders("BTCUSDT").await.unwrap();
-        exchange.cancel_orders("BTCUSDT", &orders, super::CancelSide::Both).await.unwrap();
+        exchange.cancel_orders("BTCUSDT", &orders, crate::exchange::CancelSide::Both).await.unwrap();
         let requests = server.finish();
         assert!(requests[1].target.contains("cursor=a%2Bb%2Fc%3D%3D"));
         assert_eq!(requests[2].target, "/v5/order/cancel");
@@ -209,7 +209,7 @@ mod tests {
             serde_json::json!({"orderId":"1","side":"Buy","price":"1","qty":"2"}),
             serde_json::json!({"orderId":"2","side":"Sell","price":"1","qty":"2"}),
         ]).unwrap();
-        assert!(exchange.cancel_orders("BTCUSDT", &orders, super::CancelSide::Both).await.is_err());
+        assert!(exchange.cancel_orders("BTCUSDT", &orders, crate::exchange::CancelSide::Both).await.is_err());
         let requests = server.finish();
         assert_eq!(requests.len(), 2);
         let mut ids = HashSet::new();
@@ -243,7 +243,7 @@ mod tests {
             serde_json::json!({"orderId":"1","side":"Buy","price":"1030","qty":"2"}),
             serde_json::json!({"orderId":"2","side":"Sell","price":"1050","qty":"2"}),
         ]).unwrap();
-        exchange.cancel_orders("BTCUSDT", &orders, super::CancelSide::Both).await.unwrap();
+        exchange.cancel_orders("BTCUSDT", &orders, crate::exchange::CancelSide::Both).await.unwrap();
         let requests = server.finish();
         let ids: HashSet<String> = requests.iter().map(|r| {
             assert_eq!(r.target, "/v5/order/cancel");

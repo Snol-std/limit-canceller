@@ -129,7 +129,7 @@ pub async fn run(config: AppConfig) -> Result<()> {
         Some(c) if c.enabled() => {
             // TigerX is one aggregated portfolio. Poll all TigerX open orders
             // once and apply Binance/OKX + SPOT/PERP ticker rules locally.
-            // This avoids N * 300 ms detection latency when N tickers are configured.
+            // This avoids per-ticker detection latency when N tickers are configured.
             let rules = tigerx_rules(&c.symbols)?;
             if !rules.is_empty() {
                 let exchange = TigerX::new(&c.api_key, &c.api_secret)?;

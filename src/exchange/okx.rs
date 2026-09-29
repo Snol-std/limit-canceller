@@ -189,7 +189,7 @@ mod tests {
         let server = MockServer::new(responses);
         let mut exchange = Okx::new("key", "secret", "pass", OkxMarket::Spot).unwrap();
         exchange.base_url = server.url.clone(); exchange.client = client();
-        exchange.cancel_orders("BTC-USDT", &all, super::CancelSide::Both).await.unwrap();
+        exchange.cancel_orders("BTC-USDT", &all, crate::exchange::CancelSide::Both).await.unwrap();
         let requests = server.finish();
         let sizes: Vec<usize> = requests.iter().map(|r| serde_json::from_str::<Vec<Value>>(&r.body).unwrap().len()).collect();
         assert_eq!(sizes, vec![20,20,1]);

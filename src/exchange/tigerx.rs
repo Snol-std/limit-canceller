@@ -17,7 +17,6 @@ use serde_json::Value;
 use tokio::{task::JoinSet, time::Instant};
 use tracing::{debug, info, warn};
 
-use super::transport::RequestBudget;
 use super::{
     hmac_sha256_hex, query_string, response_json, CancelSide, RequestGate, Side,
 };
@@ -26,8 +25,9 @@ use crate::symbol::Symbol;
 const MAX_PAGES: usize = 100;
 const PAGE_SIZE: i64 = 1000;
 const REST_TIMEOUT: Duration = Duration::from_secs(5);
-const READ_SPACING: Duration = Duration::from_millis(300);
-const CANCEL_RETRY_AFTER: Duration = Duration::from_secs(2);
+const READ_SPACING: Duration = Duration::ZERO;
+const CANCEL_RETRY_AFTER_SUCCESS: Duration = Duration::from_millis(750);
+const CANCEL_RETRY_AFTER_ERROR: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TigerXExchange {
@@ -91,26 +91,28 @@ impl TigerXRule {
 
 /// Request gates shared by the whole TigerX API key.
 ///
-/// The OpenAPI file documents 10 cancellation requests per 10 seconds. The
-/// open-orders endpoint does not state a separate limit, so it is kept at the
-/// conservative 300 ms spacing used by the previous implementation. Because
-/// there is now only ONE account-wide read loop, this spacing no longer grows
-/// with the number of configured tickers.
+/// v0.4.1 intentionally does NOT impose a local 10-per-10s cancel budget.
+/// The supplied OpenAPI document advertises that limit for DELETE
+/// `/trading/order`, but the TigerX terminal can cancel large same-symbol grids
+/// much faster. The old local budget was therefore an artificial bottleneck:
+/// if 7 slots had already been used, only 3 more orders were dispatched
+/// immediately and the rest waited for the rolling window.
+///
+/// We now dispatch every matching order immediately and only slow down when
+/// TigerX itself reports a real HTTP rate limit. This keeps cancellation
+/// ticker-scoped because each request still targets one exact `orderId`.
 struct TigerXShared {
     cooldown: RequestGate,
     read_gate: RequestGate,
-    cancel_gate: RequestBudget,
 }
 
 impl TigerXShared {
     fn new() -> Self {
         Self {
             cooldown: RequestGate::new(Duration::ZERO),
+            // `/trading/orders` has no rate limit in the supplied OpenAPI file.
+            // The configured poll interval is the only normal pacing.
             read_gate: RequestGate::new(READ_SPACING),
-            // The API documents 10 DELETE /trading/order requests per 10 s.
-            // A rolling budget allows the first 10 to be sent immediately and
-            // paces only the excess. The extra 100 ms avoids a boundary race.
-            cancel_gate: RequestBudget::new(10, Duration::from_millis(10_100)),
         }
     }
 }
@@ -134,7 +136,7 @@ struct CancelCompletion {
 #[derive(Debug, Clone)]
 struct PendingCancel {
     active: bool,
-    last_attempt: Instant,
+    retry_at: Instant,
 }
 
 /// One TigerX client per API key. It intentionally has no exchange/market
@@ -187,17 +189,17 @@ impl TigerX {
         params: &[(String, String)],
         json_body: Option<&str>,
     ) -> Result<Value> {
-        // Generate nonce/signature only AFTER the limiter grants a slot.
+        // Generate nonce/signature only AFTER any server-imposed cooldown.
+        // GET requests are paced only by the configured polling interval.
+        // DELETE requests have no local quota in v0.4.1: all matching order IDs
+        // are allowed to leave concurrently unless TigerX itself returns 429/418.
         if method == reqwest::Method::GET {
             self.shared
                 .read_gate
                 .wait_after(&self.shared.cooldown)
                 .await;
         } else {
-            self.shared
-                .cancel_gate
-                .wait_after(&self.shared.cooldown)
-                .await;
+            self.shared.cooldown.wait().await;
         }
 
         let nonce = Utc::now().timestamp().to_string();
@@ -346,9 +348,10 @@ impl TigerX {
 /// Runs one low-latency TigerX account loop for every configured TigerX ticker.
 ///
 /// Detection is account-wide: the number of configured Binance/OKX tickers no
-/// longer multiplies REST latency. Cancellation requests are spawned separately
-/// from polling, so the documented 10-per-10s cancellation budget never blocks
-/// discovery of newer orders.
+/// longer multiplies REST latency. Every matching cancellation is dispatched as
+/// its own concurrent DELETE immediately; there is no client-side 10-per-10s
+/// queue anymore. This is intentionally ticker-safe: unlike `/trading/cancelAll`,
+/// no unrelated TigerX symbols are touched.
 pub async fn run(exchange: TigerX, rules: Vec<TigerXRule>, interval: Duration) -> Result<()> {
     if rules.is_empty() {
         bail!("tigerx: no ticker rules configured");
@@ -388,18 +391,25 @@ pub async fn run(exchange: TigerX, rules: Vec<TigerXRule>, interval: Duration) -
         while let Some(joined) = cancel_tasks.try_join_next() {
             match joined {
                 Ok(completion) => {
+                    let completed_at = Instant::now();
+                    let failed = completion.result.is_err();
                     if let Some(state) = pending
                         .get_mut(&(completion.symbol.clone(), completion.id.clone()))
                     {
                         state.active = false;
-                        state.last_attempt = Instant::now();
+                        state.retry_at = completed_at
+                            + if failed {
+                                CANCEL_RETRY_AFTER_ERROR
+                            } else {
+                                CANCEL_RETRY_AFTER_SUCCESS
+                            };
                     }
                     if let Err(error) = completion.result {
                         warn!(
                             symbol = %completion.symbol,
                             order_id = %completion.id,
                             error = %format!("{error:#}"),
-                            "tigerx: cancellation request failed; it will be retried if the order remains open"
+                            "tigerx: cancellation request failed; retry will be fast if the order remains open"
                         );
                     }
                 }
@@ -449,7 +459,7 @@ pub async fn run(exchange: TigerX, rules: Vec<TigerXRule>, interval: Duration) -
 
             let pending_key = (order.symbol.clone(), order.id.clone());
             if let Some(state) = pending.get(&pending_key) {
-                if state.active || now.duration_since(state.last_attempt) < CANCEL_RETRY_AFTER {
+                if state.active || now < state.retry_at {
                     continue;
                 }
             }
@@ -468,7 +478,7 @@ pub async fn run(exchange: TigerX, rules: Vec<TigerXRule>, interval: Duration) -
                 pending_key,
                 PendingCancel {
                     active: true,
-                    last_attempt: now,
+                    retry_at: now,
                 },
             );
 
@@ -704,14 +714,12 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn cancel_budget_bursts_then_paces_within_the_10s_window() {
+    async fn cancel_path_has_no_client_side_10_per_10s_budget() {
         let shared = TigerXShared::new();
         let start = tokio::time::Instant::now();
-        for _ in 0..10 {
-            shared.cancel_gate.wait_after(&shared.cooldown).await;
+        for _ in 0..100 {
+            shared.cooldown.wait().await;
         }
         assert_eq!(start.elapsed(), Duration::ZERO);
-        shared.cancel_gate.wait_after(&shared.cooldown).await;
-        assert_eq!(start.elapsed(), Duration::from_millis(10_100));
     }
 }

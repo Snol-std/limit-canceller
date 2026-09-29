@@ -58,7 +58,7 @@ impl RequestGate {
 }
 
 /// Rolling-window quota: allows multiple requests at once but does not
-/// exceed the shared budget across all symbols. Used by Bybit and TigerX.
+/// exceed the shared budget across all symbols. Used by Bybit.
 pub(crate) struct RequestBudget {
     starts: Mutex<VecDeque<Instant>>,
     limit: usize,
@@ -100,7 +100,17 @@ fn retry_after(headers: &HeaderMap, fallback: Duration) -> Duration {
 pub(crate) async fn response_json(response: Response, name: &str, gate: &RequestGate) -> Result<Value> {
     let status = response.status();
     if status.as_u16() == 429 || status.as_u16() == 418 {
-        let fallback = if status.as_u16() == 418 { 120 } else { 1 };
+        let fallback = if status.as_u16() == 418 {
+            120
+        } else if name == "tigerx" {
+            // TigerX documents cancel-order limits in 10-second windows.
+            // v0.4.1 sends optimistic bursts, but if the server actually
+            // enforces the documented limit and omits Retry-After, respect one
+            // full window before sending more requests.
+            10
+        } else {
+            1
+        };
         gate.pause(retry_after(response.headers(), Duration::from_secs(fallback))).await;
     } else if name == "bybit" && status.as_u16() == 403 {
         gate.pause(Duration::from_secs(600)).await;

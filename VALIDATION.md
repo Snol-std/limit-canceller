@@ -1,40 +1,45 @@
-# Validation notes for v0.4.0 TigerX hotfix
+# Validation notes for v0.4.1 TigerX burst cancellation
 
-The TigerX implementation was reworked against the supplied `document_text.txt` and `algo (01.07).yaml` API reference.
+The TigerX changes are based on the supplied `document_text.txt` and `algo (01.07).yaml` reference.
 
-## API details used
+## What the supplied API actually exposes
 
-- `GET /api/v1/trading/orders` supports optional `sym`, `exchange`, and `businessType` filters and defaults to page size up to 1000. The hotfix therefore performs one account-wide read and filters configured TigerX rules locally.
-- `DELETE /api/v1/trading/order` is asynchronous and is limited to 10 requests per 10 seconds. `code=200000` means the cancellation request was accepted; it is not final-state confirmation.
-- The official TigerX Java sample signs sorted raw parameters, appends `&nonce`, uses HMAC-SHA256, and sends `orderId` in the JSON body for DELETE. The implementation keeps that wire format.
-- The official Java sample uses a 5-second HTTP timeout.
-- Order states eligible for cancellation are `NEW`, `OPEN`, and `PARTIALLY_FILLED`.
+- `GET /api/v1/trading/orders` returns current open orders and allows optional `sym`, `exchange`, and `businessType` filters. `pageSize` supports up to 1000.
+- `DELETE /api/v1/trading/order` cancels one incomplete order by `orderId` or `clientOrderId`. The document describes this endpoint as asynchronous and says `code=200000` means the request was accepted, not that the final exchange state is already cancelled.
+- The same endpoint is documented as `10 requests per 10 seconds`.
+- `DELETE /api/v1/trading/cancelAll` exists, but the provided schema only accepts `exchangeType`. It does not document a `sym`/ticker filter. Therefore it is not safe for normal per-ticker cancellation when unrelated orders may exist on the same TigerX Binance or OKX account.
+- The private WebSocket reference documents immediate `Orders` push messages, but the supplied material does not document a WebSocket trading/cancel command or a symbol-scoped bulk-cancel request. This release therefore does not invent an undocumented endpoint.
 
-## Fixed failure/delay modes
+## Why v0.4.0 could cancel only 3, 5, or another partial count immediately
 
-- Removed per-ticker TigerX REST polling. The old shared 300 ms read gate multiplied detection latency by the number of configured TigerX symbols; one portfolio-wide sweep now services Binance + OKX and SPOT + PERP together.
-- Cancellation requests are detached from the read loop through a managed `JoinSet`. Requests above the documented 10/10s budget can wait without stopping new open-order discovery. Dropping the TigerX runner aborts those child tasks, so GUI Stop still stops all queued work.
-- One malformed order no longer fails the whole page. The parser skips only that record and continues.
-- `orderQty` is no longer mandatory for cancellation. The API documentation allows cases where it is absent, and cancellation only requires the order ID.
-- Numeric and string representations of TigerX response `code`, `orderId`, and `totalSize` are tolerated where appropriate.
-- Explicit terminal orders and explicit non-LIMIT orders are ignored.
-- A successful asynchronous cancellation no longer fails merely because `data.orderId` is missing. If TigerX echoes a mismatched ID, it is logged without converting an otherwise accepted request into a global polling backoff.
-- Accepted/failed cancellation attempts are deduplicated while active and retried only if the same order remains open after a short grace period.
-- HTTP request timeout reduced from 15 seconds to 5 seconds to match the supplied TigerX example and avoid long stalls on a dead request.
+The v0.4.0 client enforced its own rolling `10 / 10.1 s` `RequestBudget` before sending DELETE requests. That budget was shared by all TigerX ticker rules. If the previous few seconds had already consumed slots, a new grid could have only the remaining slots dispatched immediately. The rest waited locally even before TigerX saw them.
 
-## Tests added/updated
+That local queue has been removed in v0.4.1.
 
-- Fixed signature vector for account-wide open-order pagination.
-- TigerX symbol construction for Binance/OKX and spot/perp.
-- Parser accepts an order without `orderQty` and skips terminal/market orders.
-- Response `code` accepts both JSON number and numeric string forms.
-- One account-wide open-orders request can return both Binance and OKX orders without a `sym` query filter.
-- Successful cancel response does not require `data.orderId`.
-- Shared cancellation budget still allows a burst of 10 and delays the 11th until the rolling 10-second window opens.
+## v0.4.1 cancellation behavior
 
-## Local verification required
+- One account-wide open-order snapshot is still used so detection cost does not scale with the number of configured TigerX tickers.
+- All open LIMIT orders matching the configured exact TigerX `sym` and cancellation side are submitted concurrently by exact `orderId`.
+- There is no client-side 10-per-10-second cancellation quota. A burst of 100 matching order IDs is allowed to attempt 100 DELETE requests immediately.
+- This is still selective: other TigerX tickers are not included in the burst unless they independently match another configured cancellation rule.
+- If TigerX itself returns HTTP 429/418, the shared cooldown activates. `Retry-After` is honored when present; a TigerX 429 without that header falls back to 10 seconds because that is the documented cancellation window.
+- Failed cancellations become retry-eligible after 100 ms once they are observed open again. Accepted asynchronous cancellations get 750 ms before the same still-open order can be sent again.
+- The extra fixed 300 ms read gate was removed. The user's `poll_milliseconds` now controls normal TigerX polling cadence.
 
-This environment does not contain a Rust/Cargo toolchain, so compilation could not be executed here. Run on Windows:
+## Important limitation from the supplied docs
+
+The TigerX terminal may have a private/internal symbol-scoped bulk-cancel path, but it is not present in `document_text.txt` or `algo (01.07).yaml`. The only documented bulk endpoint is exchange-wide `cancelAll(exchangeType)`. Therefore this build pursues maximum documented ticker-safe speed by concurrent single-order DELETEs rather than risking unrelated orders.
+
+## Tests updated
+
+- Existing TigerX signature and parser tests remain.
+- Existing account-wide open-order fetch test remains.
+- Existing asynchronous cancel-success test remains.
+- The old test that expected the 11th cancellation to wait 10.1 seconds was replaced: 100 client-side cancel starts are now allowed at zero simulated time when there is no server cooldown.
+
+## Local verification
+
+This environment does not contain a Rust/Cargo toolchain, so compile and live API verification must be run on Windows:
 
 ```powershell
 cargo check
@@ -43,4 +48,4 @@ cargo build --release
 .\target\release\limit-canceller.exe
 ```
 
-For a real TigerX smoke test, enable tracing and verify that a new configured limit order is discovered in the next account-wide sweep and logs `tigerx: cancellation request accepted` without delays that scale with the number of configured TigerX tickers.
+Recommended real TigerX smoke test: create 20-100 LIMIT orders on one TigerX ticker while keeping an unrelated ticker open. Start the canceller with only the target ticker/side configured. The target batch should be submitted immediately without waiting for a local 10-second rolling budget, while the unrelated ticker remains untouched. If TigerX returns real 429 responses, capture the logs because that establishes the server-side limit actually enforced for the API key.
