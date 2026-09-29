@@ -7,7 +7,7 @@
 use eframe::egui;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
-use crate::config::{AppConfig, BinanceConfig, BybitConfig, OkxConfig, SymbolConfig};
+use crate::config::{AppConfig, BinanceConfig, BybitConfig, OkxConfig, SymbolConfig, TigerXConfig, TigerXSymbolConfig};
 use crate::engine;
 use crate::exchange::CancelSide;
 use crate::symbol::Symbol;
@@ -19,6 +19,7 @@ const WINDOW_MIN_HEIGHT: f32 = 480.0;
 
 const ROW_HEIGHT: f32 = 25.0;
 const MARKET_WIDTH: f32 = 88.0;
+const UNDERLYING_WIDTH: f32 = 92.0;
 const SIDE_WIDTH: f32 = 112.0;
 const REMOVE_WIDTH: f32 = 72.0;
 
@@ -179,6 +180,7 @@ enum ExchangeId {
     Binance,
     Okx,
     Bybit,
+    Tigerx,
 }
 
 impl ExchangeId {
@@ -187,6 +189,7 @@ impl ExchangeId {
             Self::Binance => "Binance",
             Self::Okx => "OKX",
             Self::Bybit => "Bybit",
+            Self::Tigerx => "TigerX",
         }
     }
 }
@@ -197,6 +200,7 @@ enum MarketChoice {
     Futures,
     Swap,
     Linear,
+    Perp,
 }
 
 impl MarketChoice {
@@ -206,6 +210,7 @@ impl MarketChoice {
             Self::Futures => "futures",
             Self::Swap => "swap",
             Self::Linear => "linear",
+            Self::Perp => "perp",
         }
     }
 
@@ -214,6 +219,7 @@ impl MarketChoice {
             "futures" if exchange == ExchangeId::Binance => Self::Futures,
             "swap" if exchange == ExchangeId::Okx => Self::Swap,
             "linear" if exchange == ExchangeId::Bybit => Self::Linear,
+            "perp" if exchange == ExchangeId::Tigerx => Self::Perp,
             _ => Self::Spot,
         }
     }
@@ -223,6 +229,7 @@ impl MarketChoice {
             ExchangeId::Binance => Self::Futures,
             ExchangeId::Okx => Self::Swap,
             ExchangeId::Bybit => Self::Linear,
+            ExchangeId::Tigerx => Self::Perp,
         }
     }
 
@@ -240,6 +247,40 @@ impl MarketChoice {
                 Self::Linear => Self::Spot,
                 _ => Self::Linear,
             },
+            ExchangeId::Tigerx => match self {
+                Self::Perp => Self::Spot,
+                _ => Self::Perp,
+            },
+        }
+    }
+}
+
+/// Underlying exchange of a TigerX symbol (`BINANCE_*` or `OKX_*`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnderlyingExchange {
+    Binance,
+    Okx,
+}
+
+impl UnderlyingExchange {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Binance => "binance",
+            Self::Okx => "okx",
+        }
+    }
+
+    fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "okx" => Self::Okx,
+            _ => Self::Binance,
+        }
+    }
+
+    fn toggled(self) -> Self {
+        match self {
+            Self::Binance => Self::Okx,
+            Self::Okx => Self::Binance,
         }
     }
 }
@@ -247,6 +288,8 @@ impl MarketChoice {
 #[derive(Debug, Clone)]
 struct SymbolForm {
     market: MarketChoice,
+    /// Underlying exchange of the TigerX symbol; only TigerX rows use it.
+    underlying: UnderlyingExchange,
     symbol: String,
     side: CancelSide,
 }
@@ -274,6 +317,19 @@ impl ExchangeForm {
             .iter()
             .map(|item| SymbolForm {
                 market: MarketChoice::parse(&item.market, exchange),
+                underlying: UnderlyingExchange::Binance,
+                symbol: item.symbol.clone(),
+                side: CancelSide::parse(&item.side).unwrap_or(CancelSide::Both),
+            })
+            .collect()
+    }
+
+    fn tigerx_symbols_from_config(symbols: &[TigerXSymbolConfig]) -> Vec<SymbolForm> {
+        symbols
+            .iter()
+            .map(|item| SymbolForm {
+                market: MarketChoice::parse(&item.market, ExchangeId::Tigerx),
+                underlying: UnderlyingExchange::parse(&item.exchange),
                 symbol: item.symbol.clone(),
                 side: CancelSide::parse(&item.side).unwrap_or(CancelSide::Both),
             })
@@ -316,6 +372,18 @@ impl ExchangeForm {
         }
     }
 
+    fn tigerx(config: Option<&TigerXConfig>) -> Self {
+        match config {
+            Some(c) => Self {
+                api_key: c.api_key.clone(),
+                api_secret: c.api_secret.clone(),
+                passphrase: String::new(),
+                symbols: Self::tigerx_symbols_from_config(&c.symbols),
+            },
+            None => Self::blank(),
+        }
+    }
+
     fn normalize_symbols(&mut self) -> Result<(), String> {
         self.symbols.retain(|item| !item.symbol.trim().is_empty());
         for item in &mut self.symbols {
@@ -335,6 +403,18 @@ impl ExchangeForm {
             })
             .collect()
     }
+
+    fn detailed_tigerx_symbols(&self) -> Vec<TigerXSymbolConfig> {
+        self.symbols
+            .iter()
+            .map(|item| TigerXSymbolConfig {
+                exchange: item.underlying.as_str().to_string(),
+                market: item.market.as_str().to_string(),
+                symbol: item.symbol.trim().to_string(),
+                side: item.side.as_str().to_string(),
+            })
+            .collect()
+    }
 }
 
 struct State {
@@ -344,6 +424,7 @@ struct State {
     binance: ExchangeForm,
     okx: ExchangeForm,
     bybit: ExchangeForm,
+    tigerx: ExchangeForm,
     status: String,
     running: bool,
     runtime: Option<tokio::runtime::Runtime>,
@@ -402,6 +483,7 @@ impl State {
             binance: ExchangeForm::binance(config.binance.as_ref()),
             okx: ExchangeForm::okx(config.okx.as_ref()),
             bybit: ExchangeForm::bybit(config.bybit.as_ref()),
+            tigerx: ExchangeForm::tigerx(config.tigerx.as_ref()),
             status: ui_text(language).ready.to_string(),
             running: false,
             runtime: Some(runtime),
@@ -415,6 +497,7 @@ impl State {
             ExchangeId::Binance => &mut self.binance,
             ExchangeId::Okx => &mut self.okx,
             ExchangeId::Bybit => &mut self.bybit,
+            ExchangeId::Tigerx => &mut self.tigerx,
         }
     }
 
@@ -445,6 +528,11 @@ impl State {
                 api_secret: self.bybit.api_secret.trim().to_string(),
                 symbols: self.bybit.detailed_symbols(),
             }),
+            tigerx: Some(TigerXConfig {
+                api_key: self.tigerx.api_key.trim().to_string(),
+                api_secret: self.tigerx.api_secret.trim().to_string(),
+                symbols: self.tigerx.detailed_tigerx_symbols(),
+            }),
         };
 
         config.validate().map_err(|error| format!("{error:#}"))?;
@@ -455,6 +543,7 @@ impl State {
         self.binance.normalize_symbols()?;
         self.okx.normalize_symbols()?;
         self.bybit.normalize_symbols()?;
+        self.tigerx.normalize_symbols()?;
 
         let config = self.build_config()?;
         config
@@ -559,7 +648,7 @@ impl State {
 
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new("Limit Canceller 0.3.4").size(20.0).strong());
+                ui.label(egui::RichText::new("Limit Canceller 0.4.0").size(20.0).strong());
                 ui.label(
                     egui::RichText::new(format!("{}: {}", t.config_label, self.config_path))
                         .size(10.0)
@@ -718,6 +807,19 @@ impl State {
                     for (index, item) in form.symbols.iter_mut().enumerate() {
                         ui.push_id((exchange, index), |ui| {
                             ui.horizontal(|ui| {
+                                // TigerX rows carry the underlying exchange
+                                // (`binance`/`okx`) in addition to the market.
+                                if exchange == ExchangeId::Tigerx
+                                    && ui
+                                        .add_sized(
+                                            [UNDERLYING_WIDTH, ROW_HEIGHT],
+                                            egui::Button::new(item.underlying.as_str()).fill(MARKET_BUTTON),
+                                        )
+                                        .clicked()
+                                {
+                                    item.underlying = item.underlying.toggled();
+                                }
+
                                 if ui
                                     .add_sized(
                                         [MARKET_WIDTH, ROW_HEIGHT],
@@ -789,6 +891,7 @@ impl State {
                 {
                     form.symbols.push(SymbolForm {
                         market: MarketChoice::futures_default(exchange),
+                        underlying: UnderlyingExchange::Binance,
                         symbol: String::new(),
                         side: CancelSide::Both,
                     });
@@ -829,6 +932,8 @@ impl eframe::App for State {
                     self.exchange_card(ui, ExchangeId::Okx);
                     ui.add_space(6.0);
                     self.exchange_card(ui, ExchangeId::Bybit);
+                    ui.add_space(6.0);
+                    self.exchange_card(ui, ExchangeId::Tigerx);
                     ui.add_space(6.0);
                     self.status_box(ui);
                 });
@@ -995,7 +1100,7 @@ fn app_icon() -> egui::IconData {
 pub fn run() -> eframe::Result {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Limit Canceller 0.3.4")
+            .with_title("Limit Canceller 0.4.0")
             .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
             .with_min_inner_size([WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT])
             .with_icon(app_icon()),
@@ -1009,7 +1114,7 @@ pub fn run() -> eframe::Result {
     };
 
     eframe::run_native(
-        "Limit Canceller 0.3.4",
+        "Limit Canceller 0.4.0",
         native_options,
         Box::new(|cc| Ok(Box::new(State::boot(cc)))),
     )

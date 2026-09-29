@@ -1,28 +1,46 @@
-# Validation notes for v0.3.4
+# Validation notes for v0.4.0 TigerX hotfix
 
-This environment does not contain Rust/Cargo or a Windows runtime, so a real `cargo check`, Windows release build, and Task Manager memory measurement could not be executed here.
+The TigerX implementation was reworked against the supplied `document_text.txt` and `algo (01.07).yaml` API reference.
 
-Static checks performed:
+## API details used
 
-- Package version remains `0.3.4`.
-- `iced`, `iced_tiny_skia`, Slint, and `wgpu` are absent from `Cargo.toml`.
-- `eframe = 0.36.2` is restored with `default-features = false` and only `glow` plus `default_fonts` enabled.
-- The original eager single-worker Tokio runtime and normal tracing subscriber behavior from `0.3.4-egui.1` are restored.
-- The failed memory-focused experiment from the earlier `0.3.4` draft is removed.
-- Windows title-bar DWM attributes are still applied from `CreationContext` before the first visible frame.
-- `SetWindowPos(... SWP_FRAMECHANGED ...)` is still used immediately after the DWM changes, preserving the confirmed title-bar fix.
-- Dark caption, border, and caption-text colors remain enabled on supported Windows versions.
-- The iced-like dark egui palette is preserved.
-- Ordinary egui label selection remains disabled; text fields remain selectable/editable.
-- Mouse-wheel multiplier remains `2.5x`; scroll animation remains disabled.
-- Glow/OpenGL remains the only eframe renderer in this build.
+- `GET /api/v1/trading/orders` supports optional `sym`, `exchange`, and `businessType` filters and defaults to page size up to 1000. The hotfix therefore performs one account-wide read and filters configured TigerX rules locally.
+- `DELETE /api/v1/trading/order` is asynchronous and is limited to 10 requests per 10 seconds. `code=200000` means the cancellation request was accepted; it is not final-state confirmation.
+- The official TigerX Java sample signs sorted raw parameters, appends `&nonce`, uses HMAC-SHA256, and sends `orderId` in the JSON body for DELETE. The implementation keeps that wire format.
+- The official Java sample uses a 5-second HTTP timeout.
+- Order states eligible for cancellation are `NEW`, `OPEN`, and `PARTIALLY_FILLED`.
 
-Recommended Windows verification:
+## Fixed failure/delay modes
+
+- Removed per-ticker TigerX REST polling. The old shared 300 ms read gate multiplied detection latency by the number of configured TigerX symbols; one portfolio-wide sweep now services Binance + OKX and SPOT + PERP together.
+- Cancellation requests are detached from the read loop through a managed `JoinSet`. Requests above the documented 10/10s budget can wait without stopping new open-order discovery. Dropping the TigerX runner aborts those child tasks, so GUI Stop still stops all queued work.
+- One malformed order no longer fails the whole page. The parser skips only that record and continues.
+- `orderQty` is no longer mandatory for cancellation. The API documentation allows cases where it is absent, and cancellation only requires the order ID.
+- Numeric and string representations of TigerX response `code`, `orderId`, and `totalSize` are tolerated where appropriate.
+- Explicit terminal orders and explicit non-LIMIT orders are ignored.
+- A successful asynchronous cancellation no longer fails merely because `data.orderId` is missing. If TigerX echoes a mismatched ID, it is logged without converting an otherwise accepted request into a global polling backoff.
+- Accepted/failed cancellation attempts are deduplicated while active and retried only if the same order remains open after a short grace period.
+- HTTP request timeout reduced from 15 seconds to 5 seconds to match the supplied TigerX example and avoid long stalls on a dead request.
+
+## Tests added/updated
+
+- Fixed signature vector for account-wide open-order pagination.
+- TigerX symbol construction for Binance/OKX and spot/perp.
+- Parser accepts an order without `orderQty` and skips terminal/market orders.
+- Response `code` accepts both JSON number and numeric string forms.
+- One account-wide open-orders request can return both Binance and OKX orders without a `sym` query filter.
+- Successful cancel response does not require `data.orderId`.
+- Shared cancellation budget still allows a burst of 10 and delays the 11th until the rolling 10-second window opens.
+
+## Local verification required
+
+This environment does not contain a Rust/Cargo toolchain, so compilation could not be executed here. Run on Windows:
 
 ```powershell
-cargo clean
 cargo check
 cargo test
 cargo build --release
 .\target\release\limit-canceller.exe
 ```
+
+For a real TigerX smoke test, enable tracing and verify that a new configured limit order is discovered in the next account-wide sweep and logs `tigerx: cancellation request accepted` without delays that scale with the number of configured TigerX tickers.

@@ -30,6 +30,8 @@ pub struct AppConfig {
     pub okx: Option<OkxConfig>,
     #[serde(default)]
     pub bybit: Option<BybitConfig>,
+    #[serde(default)]
+    pub tigerx: Option<TigerXConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -67,6 +69,29 @@ pub struct BybitConfig {
     pub symbols: Vec<SymbolConfig>,
 }
 
+/// One TigerX ticker rule. The underlying exchange (`binance` / `okx`) and
+/// the business type (`spot` / `perp`) belong to the ticker itself because a
+/// single TigerX account aggregates both.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TigerXSymbolConfig {
+    pub exchange: String,
+    pub market: String,
+    pub symbol: String,
+    pub side: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TigerXConfig {
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub api_secret: String,
+    #[serde(default)]
+    pub symbols: Vec<TigerXSymbolConfig>,
+}
+
 fn credentials_present(api_key: &str, api_secret: &str) -> bool {
     !api_key.trim().is_empty() && !api_secret.trim().is_empty()
 }
@@ -80,6 +105,7 @@ impl Default for AppConfig {
             binance: Some(BinanceConfig::default()),
             okx: Some(OkxConfig::default()),
             bybit: Some(BybitConfig::default()),
+            tigerx: Some(TigerXConfig::default()),
         }
     }
 }
@@ -115,6 +141,16 @@ impl Default for BybitConfig {
     }
 }
 
+impl Default for TigerXConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            api_secret: String::new(),
+            symbols: Vec::new(),
+        }
+    }
+}
+
 impl BinanceConfig {
     pub fn enabled(&self) -> bool {
         credentials_present(&self.api_key, &self.api_secret)
@@ -128,6 +164,12 @@ impl OkxConfig {
 }
 
 impl BybitConfig {
+    pub fn enabled(&self) -> bool {
+        credentials_present(&self.api_key, &self.api_secret)
+    }
+}
+
+impl TigerXConfig {
     pub fn enabled(&self) -> bool {
         credentials_present(&self.api_key, &self.api_secret)
     }
@@ -170,6 +212,7 @@ impl AppConfig {
         self.binance.as_ref().is_some_and(BinanceConfig::enabled)
             || self.okx.as_ref().is_some_and(OkxConfig::enabled)
             || self.bybit.as_ref().is_some_and(BybitConfig::enabled)
+            || self.tigerx.as_ref().is_some_and(TigerXConfig::enabled)
     }
 
     pub fn poll_interval(&self) -> Result<std::time::Duration> {
@@ -245,6 +288,53 @@ impl AppConfig {
             Ok(())
         }
 
+        fn check_tigerx_symbols(symbols: &[TigerXSymbolConfig], enabled: bool) -> Result<()> {
+            if enabled && symbols.is_empty() {
+                bail!("[tigerx]: symbols must not be empty for an enabled exchange");
+            }
+
+            let mut seen: Vec<(String, String, Symbol)> = Vec::new();
+            for item in symbols {
+                let exchange = item.exchange.trim().to_ascii_lowercase();
+                if !matches!(exchange.as_str(), "binance" | "okx") {
+                    bail!(
+                        "[tigerx]: unsupported exchange {:?} for symbol {:?}; allowed values: binance, okx",
+                        item.exchange,
+                        item.symbol
+                    );
+                }
+                let market = item.market.trim().to_ascii_lowercase();
+                if !matches!(market.as_str(), "spot" | "perp") {
+                    bail!(
+                        "[tigerx]: unsupported market {:?} for symbol {:?}; allowed values: spot, perp",
+                        item.market,
+                        item.symbol
+                    );
+                }
+                if !valid_side(&item.side) {
+                    bail!(
+                        "[tigerx]: unsupported side {:?} for symbol {:?}; allowed values: buy, sell, both",
+                        item.side,
+                        item.symbol
+                    );
+                }
+                let symbol = Symbol::parse(&item.symbol)
+                    .with_context(|| format!("[tigerx]: invalid symbol {:?}", item.symbol))?;
+                if seen
+                    .iter()
+                    .any(|(seen_exchange, seen_market, seen_symbol)| {
+                        seen_exchange == &exchange && seen_market == &market && seen_symbol == &symbol
+                    })
+                {
+                    bail!(
+                        "[tigerx]: symbol {symbol} appears more than once in {exchange} {market}"
+                    );
+                }
+                seen.push((exchange, market, symbol));
+            }
+            Ok(())
+        }
+
         if let Some(c) = &self.binance {
             check_symbols(&c.symbols, &["spot", "futures"], "binance", c.enabled())?;
         }
@@ -256,6 +346,9 @@ impl AppConfig {
         }
         if let Some(c) = &self.bybit {
             check_symbols(&c.symbols, &["spot", "linear"], "bybit", c.enabled())?;
+        }
+        if let Some(c) = &self.tigerx {
+            check_tigerx_symbols(&c.symbols, c.enabled())?;
         }
         Ok(())
     }
@@ -298,6 +391,14 @@ impl AppConfig {
             write_symbols(&mut out, &c.symbols);
         }
 
+        if let Some(c) = &self.tigerx {
+            out.push('\n');
+            out.push_str("[tigerx]\n");
+            out.push_str(&format!("api_key = {}\n", toml_string(&c.api_key)));
+            out.push_str(&format!("api_secret = {}\n", toml_string(&c.api_secret)));
+            write_tigerx_symbols(&mut out, &c.symbols);
+        }
+
         out
     }
 }
@@ -311,6 +412,27 @@ fn write_symbols(out: &mut String, symbols: &[SymbolConfig]) {
     out.push_str("symbols = [\n");
     for item in symbols {
         out.push_str("  { market = ");
+        out.push_str(&toml_string(item.market.trim()));
+        out.push_str(", symbol = ");
+        out.push_str(&toml_string(item.symbol.trim()));
+        out.push_str(", side = ");
+        out.push_str(&toml_string(item.side.trim()));
+        out.push_str(" },\n");
+    }
+    out.push_str("]\n");
+}
+
+fn write_tigerx_symbols(out: &mut String, symbols: &[TigerXSymbolConfig]) {
+    if symbols.is_empty() {
+        out.push_str("symbols = []\n");
+        return;
+    }
+
+    out.push_str("symbols = [\n");
+    for item in symbols {
+        out.push_str("  { exchange = ");
+        out.push_str(&toml_string(item.exchange.trim()));
+        out.push_str(", market = ");
         out.push_str(&toml_string(item.market.trim()));
         out.push_str(", symbol = ");
         out.push_str(&toml_string(item.symbol.trim()));
@@ -505,5 +627,84 @@ mod tests {
     #[test]
     fn unknown_settings_fail() {
         assert!(toml::from_str::<AppConfig>("poll_miliseconds=10").is_err());
+    }
+
+    #[test]
+    fn tigerx_symbols_carry_exchange_and_market() {
+        let c = parse(
+            r#"
+            [tigerx]
+            api_key = "key"
+            api_secret = "secret"
+            symbols = [
+                { exchange = "binance", market = "perp", symbol = "BTC/USDT", side = "both" },
+                { exchange = "okx", market = "spot", symbol = "ETH/USDC", side = "sell" },
+                { exchange = "okx", market = "perp", symbol = "ETH/USDC", side = "buy" }
+            ]
+        "#,
+        );
+        assert!(c.validate().is_ok());
+        let t = c.tigerx.unwrap();
+        assert_eq!(t.symbols.len(), 3);
+        assert_eq!(t.symbols[0].exchange, "binance");
+        assert_eq!(t.symbols[2].market, "perp");
+    }
+
+    #[test]
+    fn tigerx_rejects_unknown_exchange_market_side_and_duplicates() {
+        let cases = [
+            r#"{ exchange = "kraken", market = "perp", symbol = "BTC/USDT", side = "both" }"#,
+            r#"{ exchange = "binance", market = "futures", symbol = "BTC/USDT", side = "both" }"#,
+            r#"{ exchange = "binance", market = "perp", symbol = "BTC/USDT", side = "left" }"#,
+            r#"{ exchange = "binance", market = "perp", symbol = "BTC/EUR", side = "both" }"#,
+            r#"
+                { exchange = "binance", market = "perp", symbol = "btc", side = "both" },
+                { exchange = "binance", market = "perp", symbol = "BTCUSDT", side = "sell" }
+            "#,
+        ];
+        for fields in cases {
+            let result = toml::from_str::<AppConfig>(&format!(
+                r#"[tigerx]
+                api_key = "key"
+                api_secret = "secret"
+                symbols = [{fields}]"#
+            ));
+            assert!(result.is_err() || result.as_ref().unwrap().validate().is_err(),
+                "case should fail: {fields}");
+        }
+    }
+
+    #[test]
+    fn tigerx_empty_keys_disable_only_that_exchange() {
+        let c = parse(
+            r#"
+            [tigerx]
+            api_key = ""
+            api_secret = ""
+            symbols = []
+        "#,
+        );
+        assert!(c.validate().is_ok());
+        assert!(!c.tigerx.as_ref().unwrap().enabled());
+        assert!(!c.has_enabled_exchange());
+    }
+
+    #[test]
+    fn tigerx_save_format_uses_inline_ticker_tables() {
+        let c = parse(
+            r#"
+            [tigerx]
+            api_key = "key"
+            api_secret = "secret"
+            symbols = [
+                { exchange = "binance", market = "perp", symbol = "BTC/USDT", side = "sell" }
+            ]
+        "#,
+        );
+        let text = c.to_gui_toml();
+        assert!(text.contains("[tigerx]\n"));
+        assert!(text.contains("{ exchange = \"binance\", market = \"perp\", symbol = \"BTC/USDT\", side = \"sell\" },"));
+        let decoded: AppConfig = toml::from_str(&text).unwrap();
+        assert_eq!(decoded.tigerx.unwrap().symbols.len(), 1);
     }
 }

@@ -58,7 +58,7 @@ impl RequestGate {
 }
 
 /// Rolling-window quota: allows multiple requests at once but does not
-/// exceed the shared budget across all symbols. Used only for Bybit.
+/// exceed the shared budget across all symbols. Used by Bybit and TigerX.
 pub(crate) struct RequestBudget {
     starts: Mutex<VecDeque<Instant>>,
     limit: usize,

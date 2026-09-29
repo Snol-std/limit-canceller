@@ -34,3 +34,15 @@ symbols = [
   { market = "linear", symbol = "BTC/USDT", side = "both" },
   { market = "spot", symbol = "ETH/USDC", side = "buy" },
 ]
+
+# TigerX aggregates orders from underlying exchanges, so each ticker also
+# selects the underlying exchange and the market:
+#   exchange: binance | okx
+#   market:   spot | perp
+[tigerx]
+api_key = ""
+api_secret = ""
+symbols = [
+  { exchange = "binance", market = "perp", symbol = "BTC/USDT", side = "both" },
+  { exchange = "okx", market = "spot", symbol = "ETH/USDC", side = "sell" },
+]

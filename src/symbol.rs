@@ -82,6 +82,12 @@ impl Symbol {
     pub fn bybit(&self) -> String {
         format!("{}{}", self.base, self.quote)
     }
+
+    /// TigerX: `BINANCE_SPOT_BTC_USDT`, `BINANCE_PERP_BTC_USDT`, `OKX_PERP_ETH_USDC`.
+    pub fn tigerx(&self, exchange: &str, is_perp: bool) -> String {
+        let business = if is_perp { "PERP" } else { "SPOT" };
+        format!("{exchange}_{business}_{}_{}", self.base, self.quote)
+    }
 }
 
 impl fmt::Display for Symbol {
@@ -125,5 +131,15 @@ mod tests {
         ] {
             assert!(Symbol::parse(bad).is_err(), "{bad} should be rejected");
         }
+    }
+
+    #[test]
+    fn tigerx_sym_format() {
+        let symbol = Symbol::parse("btc").unwrap();
+        assert_eq!(symbol.tigerx("BINANCE", false), "BINANCE_SPOT_BTC_USDT");
+        assert_eq!(symbol.tigerx("BINANCE", true), "BINANCE_PERP_BTC_USDT");
+        assert_eq!(symbol.tigerx("OKX", true), "OKX_PERP_BTC_USDT");
+        let usdc = Symbol::parse("eth/usdc").unwrap();
+        assert_eq!(usdc.tigerx("OKX", false), "OKX_SPOT_ETH_USDC");
     }
 }

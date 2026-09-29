@@ -1,6 +1,6 @@
 # Limit Canceller
 
-Limit Canceller is a lightweight Rust application for automatically monitoring and cancelling open orders on Binance, OKX, and Bybit. It supports exchange-specific markets, independent ticker lists, per-ticker cancellation rules (`buy`, `sell`, or `both`), millisecond polling, API rate-limit handling, and a compact Windows GUI for managing configuration and controlling the cancellation engine. The GUI is English by default and can be switched to Russian from the application settings.
+Limit Canceller is a lightweight Rust application for automatically monitoring and cancelling open orders on Binance, OKX, Bybit, and the TigerX aggregated API (its `BINANCE` and `OKX` accounts, on both `spot` and `perp` markets). It supports exchange-specific markets, independent ticker lists, per-ticker cancellation rules (`buy`, `sell`, or `both`), millisecond polling, API rate-limit handling, and a compact Windows GUI for managing configuration and controlling the cancellation engine. The GUI is English by default and can be switched to Russian from the application settings.
 
 ## GitHub repository:
 
@@ -114,3 +114,13 @@ https://github.com/Snol-std/limit-canceller
 - Reworked the egui palette to a muted iced-like dark theme with dark panels/inputs, softer borders, a restrained blue accent, green Start, and muted red Stop/Remove actions.
 - Disabled selectable text for ordinary egui labels. Text fields remain editable/selectable.
 - Increased mouse-wheel scrolling to `2.5x` and disabled programmatic scroll animation.
+
+### v0.4.0
+- Added TigerX support: cancellation of open orders through the TigerX aggregated API (`x-api.tiger.trade`) for both underlying exchanges (`BINANCE` and `OKX`) and both markets (`spot` and `perp`).
+- Every TigerX ticker row selects its underlying exchange (`binance` / `okx`) and market (`spot` / `perp`) independently, with the usual per-ticker `buy` / `sell` / `both` cancellation side.
+- TigerX now uses one account-wide `/api/v1/trading/orders` sweep instead of one REST polling worker per ticker. TigerX documents `sym`, `exchange`, and `businessType` as optional filters, so the app fetches the portfolio once and applies all configured Binance/OKX + spot/perp rules locally. Detection latency no longer grows by roughly 300 ms for every configured TigerX ticker.
+- TigerX cancellation requests run independently from the polling loop. The documented shared cancellation budget (10 requests per 10 seconds) still applies, but a queued 11th+ cancellation no longer blocks discovery and submission of newer open orders.
+- A single malformed TigerX order record no longer aborts the entire sweep. `orderQty` is optional for cancellation, numeric/string IDs and response codes are accepted, and explicit non-limit or terminal orders are ignored.
+- `DELETE /trading/order` follows the official sample's JSON-body signing format. `code=200000` is treated as asynchronous request acceptance as documented; a missing `data.orderId` no longer creates a false failure/backoff.
+- TigerX REST timeout follows the official sample (5 seconds instead of 15 seconds), and accepted orders that remain open are retried after a short grace period.
+- Cancellation is continuous: every sweep re-fetches current open orders and cancels everything matching the configured side, including orders placed after the engine started.

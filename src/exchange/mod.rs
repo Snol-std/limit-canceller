@@ -3,6 +3,7 @@ pub mod binance;
 pub mod bybit;
 pub mod model;
 pub mod okx;
+pub mod tigerx;
 mod transport;
 #[cfg(test)]
 mod test_support;

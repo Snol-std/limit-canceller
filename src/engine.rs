@@ -3,10 +3,11 @@
 use anyhow::{bail, Context, Result};
 use tracing::{info, warn};
 
-use crate::config::{AppConfig, SymbolConfig};
+use crate::config::{AppConfig, SymbolConfig, TigerXSymbolConfig};
 use crate::exchange::binance::{Binance, BinanceMarket};
 use crate::exchange::bybit::{Bybit, BybitMarket};
 use crate::exchange::okx::{Okx, OkxMarket};
+use crate::exchange::tigerx::{self, TigerX, TigerXExchange, TigerXMarket, TigerXRule};
 use crate::exchange::{self, CancelSide, SymbolRule};
 use crate::symbol::Symbol;
 
@@ -28,6 +29,22 @@ fn rules_for_market(
             symbol,
             cancel_side,
         });
+    }
+    Ok(rules)
+}
+
+fn tigerx_rules(raw_symbols: &[TigerXSymbolConfig]) -> Result<Vec<TigerXRule>> {
+    let mut rules = Vec::with_capacity(raw_symbols.len());
+    for raw in raw_symbols {
+        let exchange = TigerXExchange::parse(&raw.exchange)
+            .with_context(|| format!("[tigerx]: invalid exchange for {}", raw.symbol))?;
+        let market = TigerXMarket::parse(&raw.market)
+            .with_context(|| format!("[tigerx]: invalid market for {}", raw.symbol))?;
+        let symbol = Symbol::parse(&raw.symbol)
+            .with_context(|| format!("[tigerx]: invalid symbol {:?}", raw.symbol))?;
+        let cancel_side = CancelSide::parse(&raw.side)
+            .with_context(|| format!("[tigerx]: invalid side for {}", raw.symbol))?;
+        rules.push(TigerXRule::new(exchange, market, &symbol, cancel_side));
     }
     Ok(rules)
 }
@@ -103,6 +120,24 @@ pub async fn run(config: AppConfig) -> Result<()> {
         }
         Some(_) => warn!(
             exchange = "bybit",
+            "skipping exchange: api_key or api_secret is empty"
+        ),
+        None => {}
+    }
+
+    match config.tigerx.as_ref() {
+        Some(c) if c.enabled() => {
+            // TigerX is one aggregated portfolio. Poll all TigerX open orders
+            // once and apply Binance/OKX + SPOT/PERP ticker rules locally.
+            // This avoids N * 300 ms detection latency when N tickers are configured.
+            let rules = tigerx_rules(&c.symbols)?;
+            if !rules.is_empty() {
+                let exchange = TigerX::new(&c.api_key, &c.api_secret)?;
+                tasks.spawn(tigerx::run(exchange, rules, interval));
+            }
+        }
+        Some(_) => warn!(
+            exchange = "tigerx",
             "skipping exchange: api_key or api_secret is empty"
         ),
         None => {}
