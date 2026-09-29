@@ -49,3 +49,19 @@ cargo build --release
 ```
 
 Recommended real TigerX smoke test: create 20-100 LIMIT orders on one TigerX ticker while keeping an unrelated ticker open. Start the canceller with only the target ticker/side configured. The target batch should be submitted immediately without waiting for a local 10-second rolling budget, while the unrelated ticker remains untouched. If TigerX returns real 429 responses, capture the logs because that establishes the server-side limit actually enforced for the API key.
+
+
+# v0.4.2 autosave validation
+
+Autosave is implemented in the GUI only; exchange cancellation code is unchanged from v0.4.1.
+
+Expected behavior:
+- Editing any persisted field schedules autosave after 500 ms of inactivity.
+- Repeated keystrokes reset the deadline instead of writing on every key event.
+- Start performs an immediate validated save and cancels any pending autosave timer.
+- A running engine keeps the configuration snapshot captured at Start; autosaved edits take effect only after Stop -> Start or application restart.
+- Autosave normalizes symbols on cloned form data, so a valid input such as `btc` is written as `BTC/USDT` without rewriting the text box while the user is editing.
+- Invalid partial input is not persisted and the status line reports the validation error.
+- Closing the application while a valid autosave is pending attempts one immediate final write.
+- Manual Save remains available as an optional force-save action.
+- Bybit/OKX unit tests now refer to `crate::exchange::CancelSide::Both`.

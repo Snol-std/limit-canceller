@@ -6,7 +6,7 @@ ui_language = "en" # en | ru
 # Supported sides: buy | sell | both
 # Supported symbol input in the GUI includes:
 #   BTC, BTCUSDT, BTC/USDT, BTC\USDT, BTCUSDC, BTC/USDC, BTC\USDC
-# Symbols are normalized to BASE/USDT or BASE/USDC when the configuration is saved.
+# Symbols are normalized to BASE/USDT or BASE/USDC when the GUI autosaves or starts the engine.
 
 [binance]
 api_key = ""

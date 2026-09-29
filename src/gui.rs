@@ -5,7 +5,10 @@
 //! unchanged from the iced build.
 
 use eframe::egui;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::{Duration, Instant};
 
 use crate::config::{AppConfig, BinanceConfig, BybitConfig, OkxConfig, SymbolConfig, TigerXConfig, TigerXSymbolConfig};
 use crate::engine;
@@ -22,6 +25,7 @@ const MARKET_WIDTH: f32 = 88.0;
 const UNDERLYING_WIDTH: f32 = 92.0;
 const SIDE_WIDTH: f32 = 112.0;
 const REMOVE_WIDTH: f32 = 72.0;
+const AUTOSAVE_DELAY: Duration = Duration::from_millis(500);
 
 // Muted dark palette close to the previous iced build.
 const APP_BG: egui::Color32 = egui::Color32::from_rgb(24, 26, 31);
@@ -34,7 +38,6 @@ const ACCENT: egui::Color32 = egui::Color32::from_rgb(73, 105, 174);
 const ACCENT_HOVER: egui::Color32 = egui::Color32::from_rgb(88, 123, 198);
 
 const MARKET_BUTTON: egui::Color32 = egui::Color32::from_rgb(61, 88, 146);
-const SAVE_BUTTON: egui::Color32 = egui::Color32::from_rgb(68, 99, 164);
 const START_BUTTON: egui::Color32 = egui::Color32::from_rgb(46, 122, 80);
 const STOP_BUTTON: egui::Color32 = egui::Color32::from_rgb(145, 61, 67);
 const REMOVE_BUTTON: egui::Color32 = egui::Color32::from_rgb(119, 52, 57);
@@ -75,7 +78,6 @@ struct UiText {
     config_label: &'static str,
     running_badge: &'static str,
     stopped_badge: &'static str,
-    save: &'static str,
     start: &'static str,
     stop: &'static str,
     polling: &'static str,
@@ -92,9 +94,9 @@ struct UiText {
     add_ticker: &'static str,
     remove: &'static str,
     credentials_cleared: &'static str,
-    saved_running: &'static str,
-    saved_prefix: &'static str,
-    save_failed: &'static str,
+    autosaved_running: &'static str,
+    autosaved_prefix: &'static str,
+    autosave_failed: &'static str,
     failed_to_start: &'static str,
     configure_exchange: &'static str,
     running_status: &'static str,
@@ -107,16 +109,15 @@ struct UiText {
 fn ui_text(language: Language) -> UiText {
     match language {
         Language::English => UiText {
-            ready: "Ready. Changes are saved to config.toml.",
+            ready: "Ready. Autosave is on; changes are written to config.toml automatically.",
             config_label: "Config",
             running_badge: "· RUNNING",
             stopped_badge: "· STOPPED",
-            save: "Save",
             start: "Start",
             stop: "Stop",
             polling: "Polling, ms",
             language: "Language",
-            changes_running: "Changes made while RUNNING are applied after restart.",
+            changes_running: "Changes are autosaved; RUNNING uses the current snapshot until Stop -> Start.",
             enabled: "enabled",
             disabled_empty_keys: "disabled (empty keys)",
             no_tickers: "No tickers configured. Add a ticker below.",
@@ -127,10 +128,10 @@ fn ui_text(language: Language) -> UiText {
             tickers_market_cancel_side: "Tickers / market / cancel side",
             add_ticker: "+ Add ticker",
             remove: "Remove",
-            credentials_cleared: "credentials cleared. Click Save to write the changes to disk.",
-            saved_running: "Saved. The engine is still running with the previous configuration snapshot; click Stop and Start to apply changes.",
-            saved_prefix: "Saved",
-            save_failed: "Save failed",
+            credentials_cleared: "credentials cleared. Autosave will write the changes shortly.",
+            autosaved_running: "Autosaved. The running engine still uses the previous configuration snapshot; Stop and Start to apply changes.",
+            autosaved_prefix: "Autosaved",
+            autosave_failed: "Autosave pending",
             failed_to_start: "Failed to start",
             configure_exchange: "configure api_key and api_secret for at least one exchange.",
             running_status: "Running. Stop and start again to apply new settings.",
@@ -140,16 +141,15 @@ fn ui_text(language: Language) -> UiText {
             failed_load_config: "Failed to load config.toml",
         },
         Language::Russian => UiText {
-            ready: "Готово. Изменения сохраняются в config.toml.",
+            ready: "Готово. Автосохранение включено; изменения автоматически записываются в config.toml.",
             config_label: "Конфиг",
             running_badge: "· РАБОТАЕТ",
             stopped_badge: "· ОСТАНОВЛЕНО",
-            save: "Сохранить",
             start: "Старт",
             stop: "Стоп",
             polling: "Опрос, мс",
             language: "Язык",
-            changes_running: "Изменения во время работы применяются после перезапуска.",
+            changes_running: "Изменения сохраняются автоматически; во время работы они применятся после «Стоп» -> «Старт».",
             enabled: "включена",
             disabled_empty_keys: "выключена (пустые ключи)",
             no_tickers: "Нет тикеров. Добавьте тикер ниже.",
@@ -160,10 +160,10 @@ fn ui_text(language: Language) -> UiText {
             tickers_market_cancel_side: "Тикеры / рынок / сторона снятия",
             add_ticker: "+ Добавить тикер",
             remove: "Удалить",
-            credentials_cleared: "ключи API очищены. Нажмите «Сохранить», чтобы записать изменения на диск.",
-            saved_running: "Сохранено. Алгоритм продолжает работать с предыдущей копией настроек; нажмите «Стоп», затем «Старт», чтобы применить изменения.",
-            saved_prefix: "Сохранено",
-            save_failed: "Ошибка сохранения",
+            credentials_cleared: "ключи API очищены. Автосохранение запишет изменения через мгновение.",
+            autosaved_running: "Автосохранено. Запущенный алгоритм продолжает работать с предыдущей копией настроек; нажмите «Стоп», затем «Старт», чтобы применить изменения.",
+            autosaved_prefix: "Автосохранено",
+            autosave_failed: "Автосохранение ожидает корректных данных",
             failed_to_start: "Не удалось запустить",
             configure_exchange: "укажите api_key и api_secret хотя бы для одной биржи.",
             running_status: "Запущено. Чтобы применить новые настройки, остановите и запустите снова.",
@@ -430,6 +430,8 @@ struct State {
     runtime: Option<tokio::runtime::Runtime>,
     run_handle: Option<tokio::task::JoinHandle<()>>,
     engine_rx: Option<Receiver<Result<(), String>>>,
+    last_config_fingerprint: u64,
+    autosave_deadline: Option<Instant>,
 }
 
 impl State {
@@ -476,7 +478,7 @@ impl State {
             .or_else(|| config.poll_seconds.and_then(|seconds| seconds.checked_mul(1000)))
             .unwrap_or(5000);
 
-        Self {
+        let mut state = Self {
             config_path,
             poll_milliseconds: poll.to_string(),
             language,
@@ -489,7 +491,11 @@ impl State {
             runtime: Some(runtime),
             run_handle: None,
             engine_rx: None,
-        }
+            last_config_fingerprint: 0,
+            autosave_deadline: None,
+        };
+        state.last_config_fingerprint = state.config_fingerprint();
+        state
     }
 
     fn exchange_mut(&mut self, id: ExchangeId) -> &mut ExchangeForm {
@@ -501,7 +507,13 @@ impl State {
         }
     }
 
-    fn build_config(&self) -> Result<AppConfig, String> {
+    fn build_config_from_forms(
+        &self,
+        binance: &ExchangeForm,
+        okx: &ExchangeForm,
+        bybit: &ExchangeForm,
+        tigerx: &ExchangeForm,
+    ) -> Result<AppConfig, String> {
         let poll = self
             .poll_milliseconds
             .trim()
@@ -513,30 +525,130 @@ impl State {
             poll_seconds: None,
             ui_language: Some(self.language.code().to_string()),
             binance: Some(BinanceConfig {
-                api_key: self.binance.api_key.trim().to_string(),
-                api_secret: self.binance.api_secret.trim().to_string(),
-                symbols: self.binance.detailed_symbols(),
+                api_key: binance.api_key.trim().to_string(),
+                api_secret: binance.api_secret.trim().to_string(),
+                symbols: binance.detailed_symbols(),
             }),
             okx: Some(OkxConfig {
-                api_key: self.okx.api_key.trim().to_string(),
-                api_secret: self.okx.api_secret.trim().to_string(),
-                passphrase: self.okx.passphrase.trim().to_string(),
-                symbols: self.okx.detailed_symbols(),
+                api_key: okx.api_key.trim().to_string(),
+                api_secret: okx.api_secret.trim().to_string(),
+                passphrase: okx.passphrase.trim().to_string(),
+                symbols: okx.detailed_symbols(),
             }),
             bybit: Some(BybitConfig {
-                api_key: self.bybit.api_key.trim().to_string(),
-                api_secret: self.bybit.api_secret.trim().to_string(),
-                symbols: self.bybit.detailed_symbols(),
+                api_key: bybit.api_key.trim().to_string(),
+                api_secret: bybit.api_secret.trim().to_string(),
+                symbols: bybit.detailed_symbols(),
             }),
             tigerx: Some(TigerXConfig {
-                api_key: self.tigerx.api_key.trim().to_string(),
-                api_secret: self.tigerx.api_secret.trim().to_string(),
-                symbols: self.tigerx.detailed_tigerx_symbols(),
+                api_key: tigerx.api_key.trim().to_string(),
+                api_secret: tigerx.api_secret.trim().to_string(),
+                symbols: tigerx.detailed_tigerx_symbols(),
             }),
         };
 
         config.validate().map_err(|error| format!("{error:#}"))?;
         Ok(config)
+    }
+
+    fn build_config(&self) -> Result<AppConfig, String> {
+        self.build_config_from_forms(&self.binance, &self.okx, &self.bybit, &self.tigerx)
+    }
+
+    /// Build a normalized config without mutating text currently being edited.
+    fn build_autosave_config(&self) -> Result<AppConfig, String> {
+        let mut binance = self.binance.clone();
+        let mut okx = self.okx.clone();
+        let mut bybit = self.bybit.clone();
+        let mut tigerx = self.tigerx.clone();
+
+        binance.normalize_symbols()?;
+        okx.normalize_symbols()?;
+        bybit.normalize_symbols()?;
+        tigerx.normalize_symbols()?;
+
+        self.build_config_from_forms(&binance, &okx, &bybit, &tigerx)
+    }
+
+    fn config_fingerprint(&self) -> u64 {
+        fn hash_form(form: &ExchangeForm, hasher: &mut DefaultHasher) {
+            form.api_key.hash(hasher);
+            form.api_secret.hash(hasher);
+            form.passphrase.hash(hasher);
+            form.symbols.len().hash(hasher);
+            for item in &form.symbols {
+                item.market.as_str().hash(hasher);
+                item.underlying.as_str().hash(hasher);
+                item.symbol.hash(hasher);
+                item.side.as_str().hash(hasher);
+            }
+        }
+
+        let mut hasher = DefaultHasher::new();
+        self.poll_milliseconds.hash(&mut hasher);
+        self.language.code().hash(&mut hasher);
+        hash_form(&self.binance, &mut hasher);
+        hash_form(&self.okx, &mut hasher);
+        hash_form(&self.bybit, &mut hasher);
+        hash_form(&self.tigerx, &mut hasher);
+        hasher.finish()
+    }
+
+    fn mark_config_synced(&mut self) {
+        self.last_config_fingerprint = self.config_fingerprint();
+        self.autosave_deadline = None;
+    }
+
+    fn observe_config_changes(&mut self, ctx: &egui::Context) {
+        let fingerprint = self.config_fingerprint();
+        if fingerprint == self.last_config_fingerprint {
+            return;
+        }
+
+        self.last_config_fingerprint = fingerprint;
+        self.autosave_deadline = Some(Instant::now() + AUTOSAVE_DELAY);
+        ctx.request_repaint_after(AUTOSAVE_DELAY);
+    }
+
+    fn autosave_if_due(&mut self, ctx: &egui::Context) {
+        let Some(deadline) = self.autosave_deadline else {
+            return;
+        };
+
+        let now = Instant::now();
+        if now < deadline {
+            ctx.request_repaint_after(deadline.saturating_duration_since(now));
+            return;
+        }
+
+        self.autosave_deadline = None;
+        let t = ui_text(self.language);
+        match self
+            .build_autosave_config()
+            .and_then(|config| config.save(&self.config_path).map_err(|error| format!("{error:#}")))
+        {
+            Ok(()) => {
+                self.status = if self.running {
+                    t.autosaved_running.to_string()
+                } else {
+                    format!("{}: {}", t.autosaved_prefix, self.config_path)
+                };
+            }
+            Err(error) => {
+                self.status = format!("{}: {error}", t.autosave_failed);
+            }
+        }
+        ctx.request_repaint();
+    }
+
+    fn autosave_on_exit(&self) {
+        if self.autosave_deadline.is_none() {
+            return;
+        }
+
+        let _ = self
+            .build_autosave_config()
+            .and_then(|config| config.save(&self.config_path).map_err(|error| format!("{error:#}")));
     }
 
     fn save_config(&mut self) -> Result<AppConfig, String> {
@@ -552,20 +664,6 @@ impl State {
         Ok(config)
     }
 
-    fn save_clicked(&mut self) {
-        let t = ui_text(self.language);
-        match self.save_config() {
-            Ok(_) => {
-                self.status = if self.running {
-                    t.saved_running.to_string()
-                } else {
-                    format!("{}: {}", t.saved_prefix, self.config_path)
-                };
-            }
-            Err(error) => self.status = format!("{}: {error}", t.save_failed),
-        }
-    }
-
     fn start_clicked(&mut self, ctx: &egui::Context) {
         if self.running {
             return;
@@ -573,7 +671,10 @@ impl State {
 
         let t = ui_text(self.language);
         let config = match self.save_config() {
-            Ok(config) => config,
+            Ok(config) => {
+                self.mark_config_synced();
+                config
+            }
             Err(error) => {
                 self.status = format!("{}: {error}", t.failed_to_start);
                 return;
@@ -642,13 +743,12 @@ impl State {
     fn header(&mut self, ui: &mut egui::Ui) {
         let t = ui_text(self.language);
         let running = self.running;
-        let mut save = false;
         let mut start = false;
         let mut stop = false;
 
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new("Limit Canceller 0.4.1").size(20.0).strong());
+                ui.label(egui::RichText::new("Limit Canceller 0.4.2").size(20.0).strong());
                 ui.label(
                     egui::RichText::new(format!("{}: {}", t.config_label, self.config_path))
                         .size(10.0)
@@ -669,10 +769,6 @@ impl State {
                         egui::Button::new(t.start).fill(START_BUTTON).min_size(egui::vec2(58.0, 26.0)),
                     )
                     .clicked();
-                save = ui
-                    .add(egui::Button::new(t.save).fill(SAVE_BUTTON).min_size(egui::vec2(66.0, 26.0)))
-                    .clicked();
-
                 let badge = if running {
                     egui::RichText::new(t.running_badge)
                         .size(11.0)
@@ -686,9 +782,6 @@ impl State {
             });
         });
 
-        if save {
-            self.save_clicked();
-        }
         if start {
             self.start_clicked(ui.ctx());
         }
@@ -938,9 +1031,14 @@ impl eframe::App for State {
                     self.status_box(ui);
                 });
         });
+
+        self.observe_config_changes(ui.ctx());
+        self.autosave_if_due(ui.ctx());
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Do not lose a valid edit when the window is closed before the debounce fires.
+        self.autosave_on_exit();
         if let Some(handle) = self.run_handle.take() {
             handle.abort();
         }
@@ -1100,7 +1198,7 @@ fn app_icon() -> egui::IconData {
 pub fn run() -> eframe::Result {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Limit Canceller 0.4.1")
+            .with_title("Limit Canceller 0.4.2")
             .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
             .with_min_inner_size([WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT])
             .with_icon(app_icon()),
@@ -1114,7 +1212,7 @@ pub fn run() -> eframe::Result {
     };
 
     eframe::run_native(
-        "Limit Canceller 0.4.1",
+        "Limit Canceller 0.4.2",
         native_options,
         Box::new(|cc| Ok(Box::new(State::boot(cc)))),
     )

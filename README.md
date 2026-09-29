@@ -133,3 +133,13 @@ https://github.com/Snol-std/limit-canceller
 - Cancellation retries are asymmetric: failed requests become eligible again after 100 ms, while accepted asynchronous cancels get a 750 ms grace period before the same still-open order can be submitted again.
 - `/trading/cancelAll` is deliberately not used for ordinary ticker cancellation. In the supplied OpenAPI it accepts only `exchangeType`, not `sym`, so using it for one ticker could cancel unrelated TigerX orders on the same underlying Binance/OKX exchange.
 - The implementation stays selective by exact `orderId`, so Binance/OKX TigerX orders on other configured or unconfigured tickers are not intentionally touched.
+- Fixed the existing Bybit/OKX unit-test references to `CancelSide::Both`, allowing those test modules to resolve the enum from `crate::exchange`.
+
+### v0.4.2
+- Added debounced GUI autosave. Any configuration edit schedules a write to `config.toml` after 500 ms without further edits, so users no longer need to press **Save** after every field change.
+- Autosave covers polling interval, UI language, API credentials, ticker add/remove operations, market selection, TigerX underlying exchange, symbol text, and cancellation side.
+- The running cancellation engine is intentionally not hot-reconfigured. Changes are persisted immediately but an already running engine keeps its current configuration snapshot until **Stop -> Start** (or the next application launch).
+- **Start** still forces an immediate validated save before launching, so clicking Start right after typing cannot miss the last edit.
+- Closing the window flushes a pending valid autosave immediately, even if the 500 ms debounce has not elapsed.
+- Autosave validates and normalizes a cloned configuration instead of mutating the text currently being edited; partially typed invalid values are never written over a previously valid `config.toml`.
+- The manual Save button was removed; configuration persistence is automatic.
