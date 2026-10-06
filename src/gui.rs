@@ -70,6 +70,249 @@ impl Language {
             Self::Russian => "Русский",
         }
     }
+
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct HotkeyBinding {
+    label: String,
+    virtual_key: u32,
+}
+
+impl HotkeyBinding {
+    fn from_saved(value: &str) -> Option<Self> {
+        let normalized = value.trim();
+        if normalized.is_empty() {
+            return None;
+        }
+        hotkey_from_name(normalized)
+    }
+}
+
+fn hotkey_from_name(raw: &str) -> Option<HotkeyBinding> {
+    let name = raw.trim();
+    let upper = name.to_ascii_uppercase();
+
+    if upper.len() == 1 {
+        let byte = upper.as_bytes()[0];
+        if byte.is_ascii_alphanumeric() {
+            return Some(HotkeyBinding {
+                label: upper,
+                virtual_key: byte as u32,
+            });
+        }
+    }
+
+    if let Some(number) = upper.strip_prefix('F').and_then(|value| value.parse::<u32>().ok()) {
+        if (1..=24).contains(&number) {
+            return Some(HotkeyBinding {
+                label: format!("F{number}"),
+                virtual_key: 0x70 + number - 1,
+            });
+        }
+    }
+
+    let (label, virtual_key) = match upper.as_str() {
+        "NUM0" => ("0", 0x30),
+        "NUM1" => ("1", 0x31),
+        "NUM2" => ("2", 0x32),
+        "NUM3" => ("3", 0x33),
+        "NUM4" => ("4", 0x34),
+        "NUM5" => ("5", 0x35),
+        "NUM6" => ("6", 0x36),
+        "NUM7" => ("7", 0x37),
+        "NUM8" => ("8", 0x38),
+        "NUM9" => ("9", 0x39),
+        "SPACE" => ("Space", 0x20),
+        "ENTER" => ("Enter", 0x0D),
+        "TAB" => ("Tab", 0x09),
+        "BACKSPACE" => ("Backspace", 0x08),
+        "INSERT" => ("Insert", 0x2D),
+        "DELETE" => ("Delete", 0x2E),
+        "HOME" => ("Home", 0x24),
+        "END" => ("End", 0x23),
+        "PAGEUP" => ("PageUp", 0x21),
+        "PAGEDOWN" => ("PageDown", 0x22),
+        "ARROWLEFT" => ("Left", 0x25),
+        "ARROWRIGHT" => ("Right", 0x27),
+        "ARROWUP" => ("Up", 0x26),
+        "ARROWDOWN" => ("Down", 0x28),
+        "COMMA" => (",", 0xBC),
+        "PERIOD" => (".", 0xBE),
+        "SLASH" => ("/", 0xBF),
+        "BACKSLASH" => ("\\", 0xDC),
+        "SEMICOLON" => (";", 0xBA),
+        "MINUS" => ("-", 0xBD),
+        "PLUS" | "EQUALS" => ("=", 0xBB),
+        "OPENBRACKET" => ("[", 0xDB),
+        "CLOSEBRACKET" => ("]", 0xDD),
+        "BACKTICK" => ("`", 0xC0),
+        "QUOTE" => ("'", 0xDE),
+        "BROWSERBACK" => ("BrowserBack", 0xA6),
+        "SHIFTLEFT" | "SHIFTRIGHT" => ("Shift", 0x10),
+        "CONTROLLEFT" | "CONTROLRIGHT" => ("Ctrl", 0x11),
+        "ALTLEFT" | "ALTRIGHT" => ("Alt", 0x12),
+        "SUPERLEFT" => ("WinLeft", 0x5B),
+        "SUPERRIGHT" => ("WinRight", 0x5C),
+        "INTLBACKSLASH" => ("Intl\\", 0xE2),
+        _ => return None,
+    };
+
+    Some(HotkeyBinding {
+        label: label.to_string(),
+        virtual_key,
+    })
+}
+
+#[derive(Debug)]
+enum HotkeyEvent {
+    Toggle,
+    RegistrationFailed(u32),
+}
+
+#[cfg(target_os = "windows")]
+struct HotkeyManager {
+    thread_id: u32,
+    events: Receiver<HotkeyEvent>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(target_os = "windows")]
+impl HotkeyManager {
+    const HOTKEY_ID: i32 = 1;
+    const WM_HOTKEY: u32 = 0x0312;
+    const WM_UPDATE_HOTKEY: u32 = 0x8000 + 41;
+    const WM_SHUTDOWN_HOTKEY: u32 = 0x8000 + 42;
+    const MOD_NOREPEAT: u32 = 0x4000;
+
+    fn start(ctx: &egui::Context) -> Result<Self, String> {
+        use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetMessageW, PeekMessageW, MSG,
+        };
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            RegisterHotKey,
+            UnregisterHotKey,
+        };
+
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let (event_tx, event_rx) = mpsc::channel();
+        let repaint = ctx.clone();
+
+        let thread = std::thread::Builder::new()
+            .name("limit-canceller-hotkey".to_string())
+            .spawn(move || unsafe {
+                let mut message: MSG = std::mem::zeroed();
+                // Create this thread's Windows message queue before publishing its ID.
+                let _ = PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, 0);
+                let thread_id = GetCurrentThreadId();
+                let _ = ready_tx.send(thread_id);
+
+                let mut registered = false;
+                loop {
+                    let result = GetMessageW(&mut message, std::ptr::null_mut(), 0, 0);
+                    if result <= 0 {
+                        break;
+                    }
+
+                    match message.message {
+                        Self::WM_HOTKEY => {
+                            let _ = event_tx.send(HotkeyEvent::Toggle);
+                            repaint.request_repaint();
+                        }
+                        Self::WM_UPDATE_HOTKEY => {
+                            if registered {
+                                let _ = UnregisterHotKey(std::ptr::null_mut(), Self::HOTKEY_ID);
+                                registered = false;
+                            }
+
+                            let virtual_key = message.wParam as u32;
+                            if virtual_key != 0 {
+                                let ok = RegisterHotKey(
+                                    std::ptr::null_mut(),
+                                    Self::HOTKEY_ID,
+                                    Self::MOD_NOREPEAT,
+                                    virtual_key,
+                                );
+                                if ok == 0 {
+                                    let _ = event_tx.send(HotkeyEvent::RegistrationFailed(virtual_key));
+                                    repaint.request_repaint();
+                                } else {
+                                    registered = true;
+                                }
+                            }
+                        }
+                        Self::WM_SHUTDOWN_HOTKEY => break,
+                        _ => {}
+                    }
+                }
+
+                if registered {
+                    let _ = UnregisterHotKey(std::ptr::null_mut(), Self::HOTKEY_ID);
+                }
+            })
+            .map_err(|error| format!("failed to start hotkey thread: {error}"))?;
+
+        let thread_id = ready_rx
+            .recv()
+            .map_err(|_| "hotkey thread ended during startup".to_string())?;
+
+        Ok(Self {
+            thread_id,
+            events: event_rx,
+            thread: Some(thread),
+        })
+    }
+
+    fn set_binding(&self, binding: Option<&HotkeyBinding>) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
+        let virtual_key = binding.map_or(0, |binding| binding.virtual_key);
+        unsafe {
+            let _ = PostThreadMessageW(
+                self.thread_id,
+                Self::WM_UPDATE_HOTKEY,
+                virtual_key as usize,
+                0,
+            );
+        }
+    }
+
+    fn drain_events(&self) -> Vec<HotkeyEvent> {
+        let mut events = Vec::new();
+        while let Ok(event) = self.events.try_recv() {
+            events.push(event);
+        }
+        events
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for HotkeyManager {
+    fn drop(&mut self) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
+        unsafe {
+            let _ = PostThreadMessageW(self.thread_id, Self::WM_SHUTDOWN_HOTKEY, 0, 0);
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+struct HotkeyManager;
+
+#[cfg(not(target_os = "windows"))]
+impl HotkeyManager {
+    fn start(_ctx: &egui::Context) -> Result<Self, String> {
+        Ok(Self)
+    }
+
+    fn set_binding(&self, _binding: Option<&HotkeyBinding>) {}
+
+    fn drain_events(&self) -> Vec<HotkeyEvent> {
+        Vec::new()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -80,10 +323,16 @@ struct UiText {
     stopped_badge: &'static str,
     start: &'static str,
     stop: &'static str,
+    hotkey: &'static str,
+    press_key: &'static str,
+    hotkey_cleared: &'static str,
+    hotkey_set: &'static str,
+    hotkey_failed: &'static str,
     polling: &'static str,
     language: &'static str,
     changes_running: &'static str,
     enabled: &'static str,
+    idle_no_tickers: &'static str,
     disabled_empty_keys: &'static str,
     no_tickers: &'static str,
     api_key: &'static str,
@@ -115,10 +364,16 @@ fn ui_text(language: Language) -> UiText {
             stopped_badge: "· STOPPED",
             start: "Start",
             stop: "Stop",
+            hotkey: "Hotkey",
+            press_key: "Press key...",
+            hotkey_cleared: "Hotkey cleared.",
+            hotkey_set: "Hotkey set",
+            hotkey_failed: "Failed to register global hotkey",
             polling: "Polling, ms",
             language: "Language",
             changes_running: "Changes are autosaved; RUNNING uses the current snapshot until Stop -> Start.",
             enabled: "enabled",
+            idle_no_tickers: "idle (no tickers)",
             disabled_empty_keys: "disabled (empty keys)",
             no_tickers: "No tickers configured. Add a ticker below.",
             api_key: "API key",
@@ -133,7 +388,7 @@ fn ui_text(language: Language) -> UiText {
             autosaved_prefix: "Autosaved",
             autosave_failed: "Autosave pending",
             failed_to_start: "Failed to start",
-            configure_exchange: "configure api_key and api_secret for at least one exchange.",
+            configure_exchange: "configure API credentials and at least one ticker on any exchange.",
             running_status: "Running. Stop and start again to apply new settings.",
             stopped: "Stopped.",
             engine_stopped: "Engine stopped.",
@@ -147,10 +402,16 @@ fn ui_text(language: Language) -> UiText {
             stopped_badge: "· ОСТАНОВЛЕНО",
             start: "Старт",
             stop: "Стоп",
+            hotkey: "Клавиша",
+            press_key: "Нажмите клавишу...",
+            hotkey_cleared: "Горячая клавиша очищена.",
+            hotkey_set: "Горячая клавиша",
+            hotkey_failed: "Не удалось зарегистрировать глобальную клавишу",
             polling: "Опрос, мс",
             language: "Язык",
             changes_running: "Изменения сохраняются автоматически; во время работы они применятся после «Стоп» -> «Старт».",
             enabled: "включена",
+            idle_no_tickers: "ожидает (нет тикеров)",
             disabled_empty_keys: "выключена (пустые ключи)",
             no_tickers: "Нет тикеров. Добавьте тикер ниже.",
             api_key: "API-ключ",
@@ -165,7 +426,7 @@ fn ui_text(language: Language) -> UiText {
             autosaved_prefix: "Автосохранено",
             autosave_failed: "Автосохранение ожидает корректных данных",
             failed_to_start: "Не удалось запустить",
-            configure_exchange: "укажите api_key и api_secret хотя бы для одной биржи.",
+            configure_exchange: "укажите API-ключи и хотя бы один тикер на любой бирже.",
             running_status: "Запущено. Чтобы применить новые настройки, остановите и запустите снова.",
             stopped: "Остановлено.",
             engine_stopped: "Алгоритм остановлен.",
@@ -425,6 +686,9 @@ struct State {
     okx: ExchangeForm,
     bybit: ExchangeForm,
     tigerx: ExchangeForm,
+    hotkey: Option<HotkeyBinding>,
+    hotkey_capture: bool,
+    hotkey_manager: Option<HotkeyManager>,
     status: String,
     running: bool,
     runtime: Option<tokio::runtime::Runtime>,
@@ -451,7 +715,7 @@ impl State {
             .nth(1)
             .unwrap_or_else(|| "config.toml".to_string());
 
-        match AppConfig::load_or_default(&config_path) {
+        let mut state = match AppConfig::load_or_default(&config_path) {
             Ok(config) => Self::from_config(config_path, config, runtime),
             Err(error) => {
                 let language = Language::English;
@@ -464,7 +728,9 @@ impl State {
                 state.status = format!("{}: {error:#}", ui_text(language).failed_load_config);
                 state
             }
-        }
+        };
+        state.initialize_hotkey(&cc.egui_ctx);
+        state
     }
 
     fn from_config(
@@ -477,6 +743,10 @@ impl State {
             .poll_milliseconds
             .or_else(|| config.poll_seconds.and_then(|seconds| seconds.checked_mul(1000)))
             .unwrap_or(5000);
+        let hotkey = config
+            .backend_hotkey
+            .as_deref()
+            .and_then(HotkeyBinding::from_saved);
 
         let mut state = Self {
             config_path,
@@ -486,6 +756,9 @@ impl State {
             okx: ExchangeForm::okx(config.okx.as_ref()),
             bybit: ExchangeForm::bybit(config.bybit.as_ref()),
             tigerx: ExchangeForm::tigerx(config.tigerx.as_ref()),
+            hotkey,
+            hotkey_capture: false,
+            hotkey_manager: None,
             status: ui_text(language).ready.to_string(),
             running: false,
             runtime: Some(runtime),
@@ -524,6 +797,7 @@ impl State {
             poll_milliseconds: Some(poll),
             poll_seconds: None,
             ui_language: Some(self.language.code().to_string()),
+            backend_hotkey: self.hotkey.as_ref().map(|hotkey| hotkey.label.clone()),
             binance: Some(BinanceConfig {
                 api_key: binance.api_key.trim().to_string(),
                 api_secret: binance.api_secret.trim().to_string(),
@@ -587,6 +861,7 @@ impl State {
         let mut hasher = DefaultHasher::new();
         self.poll_milliseconds.hash(&mut hasher);
         self.language.code().hash(&mut hasher);
+        self.hotkey.as_ref().map(|hotkey| hotkey.label.as_str()).hash(&mut hasher);
         hash_form(&self.binance, &mut hasher);
         hash_form(&self.okx, &mut hasher);
         hash_form(&self.bybit, &mut hasher);
@@ -664,6 +939,116 @@ impl State {
         Ok(config)
     }
 
+    fn initialize_hotkey(&mut self, ctx: &egui::Context) {
+        match HotkeyManager::start(ctx) {
+            Ok(manager) => {
+                manager.set_binding(self.hotkey.as_ref());
+                self.hotkey_manager = Some(manager);
+            }
+            Err(error) => {
+                self.status = format!("{}: {error}", ui_text(self.language).hotkey_failed);
+            }
+        }
+    }
+
+    fn begin_hotkey_capture(&mut self) {
+        self.hotkey_capture = true;
+        if let Some(manager) = self.hotkey_manager.as_ref() {
+            // Disable the old registration while the next key is being captured,
+            // otherwise pressing the existing hotkey would toggle the engine.
+            manager.set_binding(None);
+        }
+        self.status = ui_text(self.language).press_key.to_string();
+    }
+
+    fn capture_hotkey_input(&mut self, ctx: &egui::Context) {
+        if !self.hotkey_capture {
+            return;
+        }
+
+        let key_name = ctx.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    repeat: false,
+                    ..
+                } => Some(format!("{key:?}")),
+                _ => None,
+            })
+        });
+
+        let Some(key_name) = key_name else {
+            return;
+        };
+
+        let t = ui_text(self.language);
+        if key_name.eq_ignore_ascii_case("Escape") {
+            self.hotkey = None;
+            self.hotkey_capture = false;
+            if let Some(manager) = self.hotkey_manager.as_ref() {
+                manager.set_binding(None);
+            }
+            self.status = t.hotkey_cleared.to_string();
+            return;
+        }
+
+        let Some(binding) = hotkey_from_name(&key_name) else {
+            self.status = format!("{}: {key_name}", t.hotkey_failed);
+            return;
+        };
+
+        if let Some(manager) = self.hotkey_manager.as_ref() {
+            manager.set_binding(Some(&binding));
+        }
+        self.status = format!("{}: {}", t.hotkey_set, binding.label);
+        self.hotkey = Some(binding);
+        self.hotkey_capture = false;
+    }
+
+    fn poll_hotkey_events(&mut self, ctx: &egui::Context) {
+        let events = self
+            .hotkey_manager
+            .as_ref()
+            .map(HotkeyManager::drain_events)
+            .unwrap_or_default();
+
+        for event in events {
+            match event {
+                HotkeyEvent::Toggle => {
+                    if self.hotkey_capture {
+                        continue;
+                    }
+                    if self.running {
+                        self.stop_clicked();
+                    } else {
+                        self.start_clicked(ctx);
+                    }
+                }
+                HotkeyEvent::RegistrationFailed(virtual_key) => {
+                    if self
+                        .hotkey
+                        .as_ref()
+                        .is_some_and(|binding| binding.virtual_key == virtual_key)
+                    {
+                        let label = self
+                            .hotkey
+                            .as_ref()
+                            .map(|binding| binding.label.clone())
+                            .unwrap_or_default();
+                        self.hotkey = None;
+                        self.hotkey_capture = false;
+                        self.status = format!(
+                            "{}: {}",
+                            ui_text(self.language).hotkey_failed,
+                            label
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     fn start_clicked(&mut self, ctx: &egui::Context) {
         if self.running {
             return;
@@ -681,7 +1066,7 @@ impl State {
             }
         };
 
-        if !config.has_enabled_exchange() {
+        if !config.has_runnable_exchange() {
             self.status = format!("{}: {}", t.failed_to_start, t.configure_exchange);
             return;
         }
@@ -745,10 +1130,11 @@ impl State {
         let running = self.running;
         let mut start = false;
         let mut stop = false;
+        let mut choose_hotkey = false;
 
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new("Limit Canceller 0.4.2").size(20.0).strong());
+                ui.label(egui::RichText::new("Limit Canceller 0.4.3").size(20.0).strong());
                 ui.label(
                     egui::RichText::new(format!("{}: {}", t.config_label, self.config_path))
                         .size(10.0)
@@ -760,15 +1146,40 @@ impl State {
                 stop = ui
                     .add_enabled(
                         running,
-                        egui::Button::new(t.stop).fill(STOP_BUTTON).min_size(egui::vec2(58.0, 26.0)),
+                        egui::Button::new(t.stop)
+                            .fill(STOP_BUTTON)
+                            .min_size(egui::vec2(58.0, 26.0)),
                     )
                     .clicked();
                 start = ui
                     .add_enabled(
                         !running,
-                        egui::Button::new(t.start).fill(START_BUTTON).min_size(egui::vec2(58.0, 26.0)),
+                        egui::Button::new(t.start)
+                            .fill(START_BUTTON)
+                            .min_size(egui::vec2(58.0, 26.0)),
                     )
                     .clicked();
+
+                let hotkey_text = if self.hotkey_capture {
+                    t.press_key.to_string()
+                } else {
+                    format!(
+                        "{}: {}",
+                        t.hotkey,
+                        self.hotkey
+                            .as_ref()
+                            .map(|hotkey| hotkey.label.as_str())
+                            .unwrap_or("—")
+                    )
+                };
+                choose_hotkey = ui
+                    .add(
+                        egui::Button::new(hotkey_text)
+                            .fill(SECONDARY_BUTTON)
+                            .min_size(egui::vec2(112.0, 26.0)),
+                    )
+                    .clicked();
+
                 let badge = if running {
                     egui::RichText::new(t.running_badge)
                         .size(11.0)
@@ -782,6 +1193,9 @@ impl State {
             });
         });
 
+        if choose_hotkey {
+            self.begin_hotkey_capture();
+        }
         if start {
             self.start_clicked(ui.ctx());
         }
@@ -836,10 +1250,12 @@ impl State {
                 ui.set_min_width(ui.available_width());
 
                 let enabled = !form.api_key.trim().is_empty() && !form.api_secret.trim().is_empty();
-                let state_label = if enabled {
-                    t.enabled
-                } else {
+                let state_label = if !enabled {
                     t.disabled_empty_keys
+                } else if form.symbols.is_empty() {
+                    t.idle_no_tickers
+                } else {
+                    t.enabled
                 };
 
                 ui.horizontal(|ui| {
@@ -1007,6 +1423,8 @@ impl State {
 
 impl eframe::App for State {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll_hotkey_events(ui.ctx());
+        self.capture_hotkey_input(ui.ctx());
         self.poll_engine_result();
 
         egui::CentralPanel::default_margins().show(ui, |ui| {
@@ -1198,7 +1616,7 @@ fn app_icon() -> egui::IconData {
 pub fn run() -> eframe::Result {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Limit Canceller 0.4.2")
+            .with_title("Limit Canceller 0.4.3")
             .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
             .with_min_inner_size([WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT])
             .with_icon(app_icon()),
@@ -1212,7 +1630,7 @@ pub fn run() -> eframe::Result {
     };
 
     eframe::run_native(
-        "Limit Canceller 0.4.2",
+        "Limit Canceller 0.4.3",
         native_options,
         Box::new(|cc| Ok(Box::new(State::boot(cc)))),
     )

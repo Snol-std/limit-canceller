@@ -1,6 +1,8 @@
 # Copy this file to config.toml, or configure everything directly from the GUI.
 poll_milliseconds = 250
 ui_language = "en" # en | ru
+# Optional global hotkey that toggles the backend. Omit it for no hotkey.
+# Example: backend_hotkey = "F8"
 
 # Every ticker has its own market and cancellation side.
 # Supported sides: buy | sell | both

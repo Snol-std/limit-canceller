@@ -143,3 +143,12 @@ https://github.com/Snol-std/limit-canceller
 - Closing the window flushes a pending valid autosave immediately, even if the 500 ms debounce has not elapsed.
 - Autosave validates and normalizes a cloned configuration instead of mutating the text currently being edited; partially typed invalid values are never written over a previously valid `config.toml`.
 - The manual Save button was removed; configuration persistence is automatic.
+
+
+### v0.4.3
+- Exchanges with saved API credentials are now allowed to have an empty ticker list. They are treated as idle and skipped by the engine instead of blocking startup. This allows credentials to stay configured on every exchange while cancellation runs only on exchanges/tickers that currently have rules.
+- OKX no longer requires a passphrase merely because API key/secret are stored when there are no OKX ticker rules; the passphrase is required when OKX is actually runnable.
+- Added an optional persistent global backend hotkey on Windows. The hotkey starts the engine when stopped and stops it when running, even when the application is not focused.
+- The hotkey selector is next to Start/Stop. Click it and press a supported keyboard key to bind it. Press Escape while selecting to clear the binding. The first run has no hotkey.
+- Hotkey changes participate in the existing 500 ms autosave and are stored as root `backend_hotkey = "F8"` in `config.toml`.
+- Global hotkey handling uses a dedicated Windows message thread with `RegisterHotKey` + `MOD_NOREPEAT`, so it sleeps while idle and holding the key does not rapidly toggle the engine.

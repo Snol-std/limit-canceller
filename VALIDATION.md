@@ -63,5 +63,20 @@ Expected behavior:
 - Autosave normalizes symbols on cloned form data, so a valid input such as `btc` is written as `BTC/USDT` without rewriting the text box while the user is editing.
 - Invalid partial input is not persisted and the status line reports the validation error.
 - Closing the application while a valid autosave is pending attempts one immediate final write.
-- Manual Save remains available as an optional force-save action.
 - Bybit/OKX unit tests now refer to `crate::exchange::CancelSide::Both`.
+
+
+# v0.4.3 idle exchanges and global hotkey validation
+
+Expected behavior:
+- An exchange with API credentials but `symbols = []` is valid and does not block Start.
+- The engine skips credentialed exchanges with no ticker rules and starts as long as at least one exchange has both credentials and at least one ticker.
+- If no exchange has a runnable ticker, Start reports a configuration error instead of starting an empty engine.
+- OKX passphrase is required only when OKX has credentials and at least one ticker rule.
+- The hotkey is empty on first launch.
+- Clicking the hotkey button enters capture mode; the next supported key becomes the global toggle key.
+- Pressing Escape while capture mode is active clears the hotkey.
+- The selected hotkey is autosaved after 500 ms and restored/registered on the next launch.
+- Pressing the global hotkey while the app is unfocused toggles the backend: stopped -> Start, running -> Stop.
+- `MOD_NOREPEAT` prevents key auto-repeat from repeatedly toggling the backend while the key is held.
+- If Windows refuses a hotkey because another application owns it or the key is reserved, the binding is cleared and the GUI reports the registration failure.

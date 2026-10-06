@@ -25,6 +25,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub ui_language: Option<String>,
     #[serde(default)]
+    pub backend_hotkey: Option<String>,
+    #[serde(default)]
     pub binance: Option<BinanceConfig>,
     #[serde(default)]
     pub okx: Option<OkxConfig>,
@@ -102,6 +104,7 @@ impl Default for AppConfig {
             poll_milliseconds: Some(100),
             poll_seconds: None,
             ui_language: Some("en".to_string()),
+            backend_hotkey: None,
             binance: Some(BinanceConfig::default()),
             okx: Some(OkxConfig::default()),
             bybit: Some(BybitConfig::default()),
@@ -215,6 +218,26 @@ impl AppConfig {
             || self.tigerx.as_ref().is_some_and(TigerXConfig::enabled)
     }
 
+    /// Returns true when at least one exchange has both credentials and a ticker rule.
+    /// Credentials may be stored for exchanges that are intentionally idle.
+    pub fn has_runnable_exchange(&self) -> bool {
+        self.binance
+            .as_ref()
+            .is_some_and(|c| c.enabled() && !c.symbols.is_empty())
+            || self
+                .okx
+                .as_ref()
+                .is_some_and(|c| c.enabled() && !c.symbols.is_empty())
+            || self
+                .bybit
+                .as_ref()
+                .is_some_and(|c| c.enabled() && !c.symbols.is_empty())
+            || self
+                .tigerx
+                .as_ref()
+                .is_some_and(|c| c.enabled() && !c.symbols.is_empty())
+    }
+
     pub fn poll_interval(&self) -> Result<std::time::Duration> {
         let millis = match (self.poll_milliseconds, self.poll_seconds) {
             (Some(_), Some(_)) => bail!("set only poll_milliseconds or poll_seconds, not both"),
@@ -250,12 +273,7 @@ impl AppConfig {
             symbols: &[SymbolConfig],
             allowed_markets: &[&str],
             name: &str,
-            enabled: bool,
         ) -> Result<()> {
-            if enabled && symbols.is_empty() {
-                bail!("[{name}]: symbols must not be empty for an enabled exchange");
-            }
-
             let mut seen: Vec<(String, Symbol)> = Vec::new();
             for item in symbols {
                 let market = item.market.trim().to_ascii_lowercase();
@@ -288,11 +306,7 @@ impl AppConfig {
             Ok(())
         }
 
-        fn check_tigerx_symbols(symbols: &[TigerXSymbolConfig], enabled: bool) -> Result<()> {
-            if enabled && symbols.is_empty() {
-                bail!("[tigerx]: symbols must not be empty for an enabled exchange");
-            }
-
+        fn check_tigerx_symbols(symbols: &[TigerXSymbolConfig]) -> Result<()> {
             let mut seen: Vec<(String, String, Symbol)> = Vec::new();
             for item in symbols {
                 let exchange = item.exchange.trim().to_ascii_lowercase();
@@ -336,19 +350,19 @@ impl AppConfig {
         }
 
         if let Some(c) = &self.binance {
-            check_symbols(&c.symbols, &["spot", "futures"], "binance", c.enabled())?;
+            check_symbols(&c.symbols, &["spot", "futures"], "binance")?;
         }
         if let Some(c) = &self.okx {
-            check_symbols(&c.symbols, &["spot", "swap"], "okx", c.enabled())?;
-            if c.enabled() && c.passphrase.trim().is_empty() {
+            check_symbols(&c.symbols, &["spot", "swap"], "okx")?;
+            if c.enabled() && !c.symbols.is_empty() && c.passphrase.trim().is_empty() {
                 bail!("[okx]: passphrase is empty");
             }
         }
         if let Some(c) = &self.bybit {
-            check_symbols(&c.symbols, &["spot", "linear"], "bybit", c.enabled())?;
+            check_symbols(&c.symbols, &["spot", "linear"], "bybit")?;
         }
         if let Some(c) = &self.tigerx {
-            check_tigerx_symbols(&c.symbols, c.enabled())?;
+            check_tigerx_symbols(&c.symbols)?;
         }
         Ok(())
     }
@@ -364,6 +378,9 @@ impl AppConfig {
         }
         if let Some(language) = &self.ui_language {
             out.push_str(&format!("ui_language = {}\n", toml_string(language)));
+        }
+        if let Some(hotkey) = self.backend_hotkey.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            out.push_str(&format!("backend_hotkey = {}\n", toml_string(hotkey)));
         }
 
         if let Some(c) = &self.binance {
@@ -707,4 +724,56 @@ mod tests {
         let decoded: AppConfig = toml::from_str(&text).unwrap();
         assert_eq!(decoded.tigerx.unwrap().symbols.len(), 1);
     }
+    #[test]
+    fn credentials_without_tickers_are_allowed_but_not_runnable() {
+        let c = parse(
+            r#"
+            [binance]
+            api_key = "key"
+            api_secret = "secret"
+            symbols = []
+
+            [okx]
+            api_key = "key"
+            api_secret = "secret"
+            passphrase = ""
+            symbols = []
+        "#,
+        );
+        assert!(c.validate().is_ok());
+        assert!(c.has_enabled_exchange());
+        assert!(!c.has_runnable_exchange());
+    }
+
+    #[test]
+    fn idle_exchange_does_not_block_another_runnable_exchange() {
+        let c = parse(
+            r#"
+            [binance]
+            api_key = "saved-binance-key"
+            api_secret = "saved-binance-secret"
+            symbols = []
+
+            [bybit]
+            api_key = "active-key"
+            api_secret = "active-secret"
+            symbols = [
+                { market = "linear", symbol = "BTC/USDT", side = "both" }
+            ]
+        "#,
+        );
+        assert!(c.validate().is_ok());
+        assert!(c.has_runnable_exchange());
+    }
+
+    #[test]
+    fn backend_hotkey_roundtrips_in_gui_toml() {
+        let mut c = AppConfig::default();
+        c.backend_hotkey = Some("F8".to_string());
+        let text = c.to_gui_toml();
+        assert!(text.contains("backend_hotkey = \"F8\""));
+        let decoded: AppConfig = toml::from_str(&text).unwrap();
+        assert_eq!(decoded.backend_hotkey.as_deref(), Some("F8"));
+    }
+
 }
